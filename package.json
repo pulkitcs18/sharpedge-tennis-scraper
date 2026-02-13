@@ -1,0 +1,23 @@
+{
+  "name": "sharpedge-tennis-scraper",
+  "version": "1.0.0",
+  "description": "TennisStats scraper for SharpEdge tennis predictions",
+  "main": "dist/runner.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/runner.js",
+    "dev": "ts-node src/runner.ts"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0",
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
