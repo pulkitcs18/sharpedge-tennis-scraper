@@ -3,12 +3,6 @@
  * 
  * Scrapes player stats, H2H data, daily matches, odds, and form data
  * Designed to run on Railway alongside existing Action Network scraper
- * 
- * Data extracted:
- * - Daily matches with odds, form scores, and tournament info
- * - Player profiles (win %, surface stats, aces, serve speed, etc.)
- * - Head-to-head records with detailed stat comparisons
- * - Rankings (ATP/WTA with Elo scores)
  */
 
 import puppeteer, { Browser, Page } from 'puppeteer';
@@ -65,13 +59,11 @@ export interface PlayerStats {
   careerPrizeMoney: string;
   titles: number;
   grandSlams: number;
-  // Detailed stats for prediction model
   straightSetsWinPct: number;
   comebackWinPct: number;
   set1WinPct: number;
   set2WinPct: number;
   set3WinPct: number;
-  // Over/under game stats
   avgTotalGames3Sets: number | null;
   avgTotalGames5Sets: number | null;
 }
@@ -135,16 +127,6 @@ export class TennisStatsScraper {
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
     );
-    // Block images/fonts to speed up scraping
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      const resourceType = req.resourceType();
-      if (['image', 'font', 'media'].includes(resourceType)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
     return page;
   }
 
@@ -155,87 +137,223 @@ export class TennisStatsScraper {
     const url = date ? `${this.baseUrl}/${date}` : this.baseUrl;
     
     console.log(`[TennisStats] Scraping daily matches from ${url}`);
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
     
-    // Wait for match data to load (site uses JS rendering)
-    await page.waitForSelector('a[href*="/h2h/"]', { timeout: 15000 }).catch(() => {
-      console.warn('[TennisStats] No matches found or page load timeout');
+    // Wait for match links to appear
+    await page.waitForSelector('a[href*="/h2h/"]', { timeout: 20000 }).catch(() => {
+      console.warn('[TennisStats] No match links found or timeout');
     });
+
+    // Extra wait for dynamic content
+    await new Promise(r => setTimeout(r, 3000));
 
     const matches = await page.evaluate(() => {
       const results: any[] = [];
-      
-      // Each tournament section has an h2 header
-      const tournamentHeaders = document.querySelectorAll('h2');
-      
-      tournamentHeaders.forEach((header) => {
-        const headerText = header.textContent?.trim() || '';
-        // Parse tournament info: "Rotterdam ATP - Netherlands"
-        const tournamentMatch = headerText.match(/^(.+?)\s*-\s*(.+)$/);
-        if (!tournamentMatch) return;
-        
-        const tournament = tournamentMatch[1].trim();
-        const country = tournamentMatch[2].trim();
-        
-        // Determine gender and category from nearby elements
-        const section = header.closest('div') || header.parentElement;
-        if (!section) return;
-        
-        const sectionText = section.textContent || '';
-        const gender = sectionText.includes('Women') ? 'Women' : 'Men';
-        const category = sectionText.includes('Doubles') ? 'Doubles' : 'Singles';
-        const surface = sectionText.includes('Clay') ? 'Clay' 
-                      : sectionText.includes('Grass') ? 'Grass' 
-                      : 'Hard';
 
-        // Find match links within the section
-        const matchLinks = section.querySelectorAll('a[href*="/h2h/"]');
+      // Get all match links on the page
+      const matchLinks = document.querySelectorAll('a[href*="/h2h/"]');
+
+      matchLinks.forEach((link: any) => {
+        const href = link.getAttribute('href') || '';
+        // Normalize the text: collapse whitespace and newlines
+        const rawText = (link.textContent || '').replace(/\s+/g, ' ').trim();
+
+        if (!rawText || !href) return;
+
+        // ──────────────────────────────────────────────────────────
+        // Match text patterns from tennisstats.com:
+        //
+        // Upcoming with odds:
+        //   "86 Alex De Minaur (8) 1.36 2:00pm 67 Ugo Humbert (36) 3.20"
+        //
+        // Upcoming without odds:
+        //   "86 Taylor Fritz (7) 4:00pm 75 Marin Cilic (61)"
+        //
+        // Finished:
+        //   "80 Taylor Fritz (7) 1.50 2 Fin. 71 Brandon Nakashima (29) 2.63 0"
+        //
+        // Live:
+        //   "71 Ioannis Xilas (388) 1.44 1 5 15 33 Eric Vanshelboim (542) 2.63 0 3 40 • Serving"
+        //
+        // Doubles:
+        //   "73 Arevalo - Pavic (6 / 6) 1.18 12:00pm 60 Ho - Jebens (74 / 73) 4.50"
+        // ──────────────────────────────────────────────────────────
+
+        // Pattern: form1 Name1 (rank1) [odds1] time/status form2 Name2 (rank2) [odds2] [score]
+        // Regex approach: extract chunks around the parenthesized rankings
         
-        matchLinks.forEach((link) => {
-          const href = (link as HTMLAnchorElement).href;
-          const matchText = link.textContent?.trim() || '';
-          
-          // Extract player names, form scores, odds, and times from match row
-          const row = link.closest('div') || link;
-          const allText = row.textContent || '';
-          
-          // Try to parse player data from the match entry
-          const nameMatches = allText.match(
-            /(\d+)\s+(.+?)\s*\((\d+)\)\s*([\d.]+)?\s*([\d:]+\s*[ap]m|Fin\.|Live)\s*(\d+)\s+(.+?)\s*\((\d+)\)\s*([\d.]+)?/i
-          );
-          
-          if (nameMatches) {
-            const isFinished = allText.includes('Fin.');
-            const isLive = allText.includes('Serving') || allText.includes('Live');
-            
-            results.push({
-              tournament,
-              country,
-              gender,
-              category,
-              round: 'Main',
-              surface,
-              player1: {
-                name: nameMatches[2].trim(),
-                ranking: parseInt(nameMatches[3]) || null,
-                formScore: parseInt(nameMatches[1]) || 0,
-                odds: nameMatches[4] ? parseFloat(nameMatches[4]) : null,
-              },
-              player2: {
-                name: nameMatches[7].trim(),
-                ranking: parseInt(nameMatches[8]) || null,
-                formScore: parseInt(nameMatches[6]) || 0,
-                odds: nameMatches[9] ? parseFloat(nameMatches[9]) : null,
-              },
-              scheduledTime: nameMatches[5]?.trim() || '',
-              status: isFinished ? 'finished' : isLive ? 'live' : 'upcoming',
-              h2hUrl: href,
-            });
-          }
+        // Find all (number) patterns for rankings
+        const rankingPattern = /\(([^)]+)\)/g;
+        const rankings: any[] = [];
+        let m;
+        while ((m = rankingPattern.exec(rawText)) !== null) {
+          rankings.push({ match: m[0], value: m[1], index: m.index });
+        }
+
+        if (rankings.length < 2) return; // Need at least 2 rankings (2 players)
+
+        // Split text at the two ranking markers
+        const beforeRank1 = rawText.substring(0, rankings[0].index).trim();
+        const betweenRanks = rawText.substring(
+          rankings[0].index + rankings[0].match.length,
+          rankings[1].index
+        ).trim();
+        const afterRank2 = rawText.substring(
+          rankings[1].index + rankings[1].match.length
+        ).trim();
+
+        // Parse Player 1: "86 Alex De Minaur" → form=86, name="Alex De Minaur"
+        const p1Match = beforeRank1.match(/^(\d+)\s+(.+)$/);
+        if (!p1Match) return;
+        const form1 = parseInt(p1Match[1]);
+        const name1 = p1Match[2].trim();
+        const rank1Text = rankings[0].value;
+
+        // Parse middle section: "[odds1] time/status form2 Name2"
+        // Could be: "1.36 2:00pm 67 Ugo Humbert"
+        // Or: "4:00pm 75 Marin Cilic"
+        // Or: "1.50 2 Fin. 71 Brandon Nakashima"
+
+        const middleParts = betweenRanks.split(/\s+/);
+
+        let odds1: number | null = null;
+        let scheduledTime = '';
+        let status: 'upcoming' | 'live' | 'finished' = 'upcoming';
+        let form2 = 0;
+        let name2 = '';
+
+        // Detect status
+        const isFinished = betweenRanks.includes('Fin.');
+        const isLive = betweenRanks.includes('Serving') || betweenRanks.includes('•');
+
+        if (isFinished) status = 'finished';
+        else if (isLive) status = 'live';
+
+        // Find the time pattern (e.g., "2:00pm", "10:00am")
+        const timeMatch = betweenRanks.match(/\d{1,2}:\d{2}\s*[ap]m/i);
+        if (timeMatch) {
+          scheduledTime = timeMatch[0];
+        }
+
+        // Try to find form2 + name2 in the middle section
+        // Look for the pattern: number followed by text (player name)
+        // Working backwards from the second ranking
+        const beforeName2 = betweenRanks;
+        const name2Match = beforeName2.match(/(\d+)\s+([A-Z][a-zA-Z][\w\s.'-]+)$/);
+        if (name2Match) {
+          form2 = parseInt(name2Match[1]);
+          name2 = name2Match[2].trim();
+        }
+
+        // Try to extract odds1 (first decimal number in the middle)
+        const odds1Match = betweenRanks.match(/^[\s]*(\d+\.\d{2})/);
+        if (odds1Match) {
+          odds1 = parseFloat(odds1Match[1]);
+        }
+
+        // Parse after rank2: "[odds2] [score]"
+        let odds2: number | null = null;
+        const odds2Match = afterRank2.match(/(\d+\.\d{2})/);
+        if (odds2Match) {
+          odds2 = parseFloat(odds2Match[1]);
+        }
+
+        // Parse ranking numbers (handle doubles like "6 / 6")
+        let rank1: number | null = null;
+        const rank1Match = rank1Text.match(/^(\d+)/);
+        if (rank1Match) rank1 = parseInt(rank1Match[1]);
+
+        let rank2: number | null = null;
+        const rank2Match = rankings[1].value.match(/^(\d+)/);
+        if (rank2Match) rank2 = parseInt(rank2Match[1]);
+
+        if (!name1 || !name2) return;
+
+        results.push({
+          player1: {
+            name: name1,
+            ranking: rank1,
+            formScore: form1,
+            odds: odds1,
+          },
+          player2: {
+            name: name2,
+            ranking: rank2,
+            formScore: form2,
+            odds: odds2,
+          },
+          scheduledTime,
+          status,
+          h2hUrl: href.startsWith('http') ? href : 'https://tennisstats.com' + href,
         });
       });
-      
-      return results;
+
+      // ── Now extract tournament context for each match ──
+      // Walk through the page and map sections to their tournament headers
+      const sections = document.querySelectorAll('h2, a[href*="/h2h/"]');
+      let currentTournament = '';
+      let currentCountry = '';
+      let currentGender: string = 'Men';
+      let currentCategory: string = 'Singles';
+      let currentSurface: string = 'Hard';
+      let currentRound: string = 'Main';
+
+      const tournamentMap = new Map<string, any>();
+
+      sections.forEach((el: any) => {
+        if (el.tagName === 'H2') {
+          const text = (el.textContent || '').trim();
+          const parts = text.match(/^(.+?)\s*-\s*(.+)$/);
+          if (parts) {
+            currentTournament = parts[1].trim();
+            currentCountry = parts[2].trim();
+          }
+
+          // Look for nearby text that indicates gender/category/surface
+          const parent = el.closest('div') || el.parentElement;
+          const parentText = parent ? parent.textContent || '' : '';
+          
+          if (parentText.includes('Women')) currentGender = 'Women';
+          else currentGender = 'Men';
+          
+          if (parentText.includes('Doubles')) currentCategory = 'Doubles';
+          else currentCategory = 'Singles';
+          
+          if (parentText.includes('Clay')) currentSurface = 'Clay';
+          else if (parentText.includes('Grass')) currentSurface = 'Grass';
+          else currentSurface = 'Hard';
+
+          if (parentText.includes('Qualification')) currentRound = 'Qualification';
+          else currentRound = 'Main';
+        } else {
+          const href = el.getAttribute('href') || '';
+          if (href.includes('/h2h/')) {
+            const fullUrl = href.startsWith('http') ? href : 'https://tennisstats.com' + href;
+            tournamentMap.set(fullUrl, {
+              tournament: currentTournament,
+              country: currentCountry,
+              gender: currentGender,
+              category: currentCategory,
+              surface: currentSurface,
+              round: currentRound,
+            });
+          }
+        }
+      });
+
+      // Merge tournament info into results
+      return results.map((r: any) => {
+        const info = tournamentMap.get(r.h2hUrl) || {};
+        return {
+          ...r,
+          tournament: info.tournament || '',
+          country: info.country || '',
+          gender: info.gender || 'Men',
+          category: info.category || 'Singles',
+          surface: info.surface || 'Hard',
+          round: info.round || 'Main',
+        };
+      });
     });
 
     await page.close();
@@ -251,103 +369,56 @@ export class TennisStatsScraper {
     
     console.log(`[TennisStats] Scraping player: ${playerSlug}`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 2000));
 
     const stats = await page.evaluate(() => {
-      const getText = (selector: string): string => {
-        const el = document.querySelector(selector);
-        return el?.textContent?.trim() || '';
-      };
+      const pageText = (document.body.textContent || '').replace(/\s+/g, ' ');
 
-      const pageText = document.body.textContent || '';
-
-      // Parse name from h1
-      const name = document.querySelector('h1')?.textContent?.replace('Stats', '').trim() || '';
+      const name = (document.querySelector('h1')?.textContent || '').replace('Stats', '').trim();
       if (!name) return null;
 
-      // Parse ranking and elo
-      const rankMatch = pageText.match(/ATP Rank\s*(\d+)/i) || pageText.match(/WTA Rank\s*(\d+)/i);
-      const eloMatch = pageText.match(/Points?\s*([\d,]+)/i);
-      
-      // Parse career record
-      const recordMatch = pageText.match(/(\d+)\s*-\s*(\d+)/);
-      const wins = recordMatch ? parseInt(recordMatch[1]) : 0;
-      const losses = recordMatch ? parseInt(recordMatch[2]) : 0;
+      const grab = (pattern: RegExp): string | null => {
+        const m = pageText.match(pattern);
+        return m ? m[1] : null;
+      };
 
-      // Parse age, height, weight
-      const ageMatch = pageText.match(/Age\s*(\d+)/i);
-      const heightMatch = pageText.match(/([\d.]+)m/);
-      const weightMatch = pageText.match(/(\d+)kg/);
-      const handMatch = pageText.match(/(Right|Left)-handed/i);
-
-      // Parse win percentages
-      const yearWinMatch = pageText.match(/Win Percentage\s*2026.*?(\d+\.?\d*)%/s);
-      const trailing12Match = pageText.match(/Trailing 12 Months\s*(\d+\.?\d*)%/i);
-      const careerWinMatch = pageText.match(/Career Total\s*(\d+\.?\d*)%/i);
-
-      // Surface win percentages
-      const hardMatch = pageText.match(/Hard\s*(\d+\.?\d*)%/);
-      const clayMatch = pageText.match(/Clay\s*(\d+\.?\d*)%/);
-      const grassMatch = pageText.match(/Grass\s*(\d+\.?\d*)%/);
-
-      // Aces per match
-      const acesMatch = pageText.match(/Aces Per Match\s*([\d.]+)/i);
-      
-      // Serve speed
-      const serveMatch = pageText.match(/Serve Speed.*?(\d+\.?\d*)km\/h/i);
-
-      // Prize money
-      const moneyMatch = pageText.match(/\$([\d,]+)/);
-
-      // Titles
-      const titlesMatch = pageText.match(/(\d+)\s*Titles/i);
-      const slamsMatch = pageText.match(/(\d+)\s*Grand Slams/i);
-
-      // Form score
-      const formMatch = pageText.match(/(\d+)\s*(Unplayable|Very Good|Good|Average|Poor)\s*Form/i);
-
-      // Detailed match stats
-      const straightSetsMatch = pageText.match(/Wins in Straight Sets\s*(\d+\.?\d*)%/i);
-      const comebackMatch = pageText.match(/Wins From Behind\s*(\d+\.?\d*)%/i);
-      const set1Match = pageText.match(/Set 1 Win\s*(\d+\.?\d*)%/i);
-      const set2Match = pageText.match(/Set 2 Win\s*(\d+\.?\d*)%/i);
-      const set3Match = pageText.match(/Set 3 Win\s*(\d+\.?\d*)%/i);
-
-      // Game totals
-      const avgGames3Match = pageText.match(/Average Total Games \(3 Set.*?\)\s*([\d.]+)/i);
-      const avgGames5Match = pageText.match(/Average Total Games \(5 Set.*?\)\s*([\d.]+)/i);
+      const grabNum = (pattern: RegExp): number => {
+        const v = grab(pattern);
+        return v ? parseFloat(v.replace(',', '')) : 0;
+      };
 
       return {
         name,
-        country: '', // Parsed from flag/subtitle
-        ranking: rankMatch ? parseInt(rankMatch[1]) : 0,
-        eloScore: eloMatch ? parseInt(eloMatch[1].replace(',', '')) : 0,
-        age: ageMatch ? parseInt(ageMatch[1]) : 0,
-        height: heightMatch ? `${heightMatch[1]}m` : '',
-        weight: weightMatch ? `${weightMatch[1]}kg` : '',
-        hand: handMatch ? handMatch[1] : '',
-        formScore: formMatch ? parseInt(formMatch[1]) : 0,
-        careerWins: wins,
-        careerLosses: losses,
-        careerWinPct: careerWinMatch ? parseFloat(careerWinMatch[1]) : 0,
-        currentYearWinPct: yearWinMatch ? parseFloat(yearWinMatch[1]) : 0,
-        trailing12MonthsWinPct: trailing12Match ? parseFloat(trailing12Match[1]) : 0,
+        country: '',
+        ranking: grabNum(/(?:ATP|WTA) Rank\s*(\d+)/i),
+        eloScore: grabNum(/Points?\s*([\d,]+)/i),
+        age: grabNum(/Age\s*(\d+)/i),
+        height: grab(/([\d.]+)m/) ? grab(/([\d.]+)m/) + 'm' : '',
+        weight: grab(/(\d+)kg/) ? grab(/(\d+)kg/) + 'kg' : '',
+        hand: grab(/(Right|Left)-handed/i) || '',
+        formScore: grabNum(/(\d+)\s*(?:Unplayable|Very Good|Good|Average|Poor)\s*Form/i),
+        careerWins: grabNum(/(\d+)\s*-\s*\d+/),
+        careerLosses: grabNum(/\d+\s*-\s*(\d+)/),
+        careerWinPct: grabNum(/Career Total\s*(\d+\.?\d*)%/i),
+        currentYearWinPct: grabNum(/2026.*?(\d+\.?\d*)%/),
+        trailing12MonthsWinPct: grabNum(/Trailing 12 Months\s*(\d+\.?\d*)%/i),
         surfaceWinPct: {
-          hard: hardMatch ? parseFloat(hardMatch[1]) : 0,
-          clay: clayMatch ? parseFloat(clayMatch[1]) : 0,
-          grass: grassMatch ? parseFloat(grassMatch[1]) : 0,
+          hard: grabNum(/Hard\s*(\d+\.?\d*)%/),
+          clay: grabNum(/Clay\s*(\d+\.?\d*)%/),
+          grass: grabNum(/Grass\s*(\d+\.?\d*)%/),
         },
-        acesPerMatch: acesMatch ? parseFloat(acesMatch[1]) : 0,
-        serveSpeed: serveMatch ? parseFloat(serveMatch[1]) : null,
-        careerPrizeMoney: moneyMatch ? `$${moneyMatch[1]}` : '',
-        titles: titlesMatch ? parseInt(titlesMatch[1]) : 0,
-        grandSlams: slamsMatch ? parseInt(slamsMatch[1]) : 0,
-        straightSetsWinPct: straightSetsMatch ? parseFloat(straightSetsMatch[1]) : 0,
-        comebackWinPct: comebackMatch ? parseFloat(comebackMatch[1]) : 0,
-        set1WinPct: set1Match ? parseFloat(set1Match[1]) : 0,
-        set2WinPct: set2Match ? parseFloat(set2Match[1]) : 0,
-        set3WinPct: set3Match ? parseFloat(set3Match[1]) : 0,
-        avgTotalGames3Sets: avgGames3Match ? parseFloat(avgGames3Match[1]) : null,
-        avgTotalGames5Sets: avgGames5Match ? parseFloat(avgGames5Match[1]) : null,
+        acesPerMatch: grabNum(/Aces Per Match\s*([\d.]+)/i),
+        serveSpeed: grabNum(/Serve Speed.*?(\d+\.?\d*)km/i) || null,
+        careerPrizeMoney: grab(/\$([\d,]+)/) ? '$' + grab(/\$([\d,]+)/) : '',
+        titles: grabNum(/(\d+)\s*Titles/i),
+        grandSlams: grabNum(/(\d+)\s*Grand Slams/i),
+        straightSetsWinPct: grabNum(/Wins in Straight Sets\s*(\d+\.?\d*)%/i),
+        comebackWinPct: grabNum(/Wins From Behind\s*(\d+\.?\d*)%/i),
+        set1WinPct: grabNum(/Set 1 Win\s*(\d+\.?\d*)%/i),
+        set2WinPct: grabNum(/Set 2 Win\s*(\d+\.?\d*)%/i),
+        set3WinPct: grabNum(/Set 3 Win\s*(\d+\.?\d*)%/i),
+        avgTotalGames3Sets: grabNum(/Average Total Games \(3 Set.*?\)\s*([\d.]+)/i) || null,
+        avgTotalGames5Sets: grabNum(/Average Total Games \(5 Set.*?\)\s*([\d.]+)/i) || null,
       };
     });
 
@@ -359,16 +430,15 @@ export class TennisStatsScraper {
 
   async scrapeH2H(h2hPath: string): Promise<H2HData | null> {
     const page = await this.newPage();
-    // h2hPath can be full URL or just the path portion
     const url = h2hPath.startsWith('http') ? h2hPath : `${this.baseUrl}/h2h/${h2hPath}`;
     
     console.log(`[TennisStats] Scraping H2H: ${url}`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 2000));
 
     const data = await page.evaluate(() => {
-      const pageText = document.body.textContent || '';
+      const pageText = (document.body.textContent || '').replace(/\s+/g, ' ');
 
-      // Get player names from the h1
       const h1 = document.querySelector('h1')?.textContent || '';
       const vsMatch = h1.match(/(.+?)\s+vs\s+(.+?)\s+Head/i);
       if (!vsMatch) return null;
@@ -376,50 +446,13 @@ export class TennisStatsScraper {
       const player1 = vsMatch[1].trim();
       const player2 = vsMatch[2].trim();
 
-      // H2H record
+      const grab = (pattern: RegExp): string | null => {
+        const m = pageText.match(pattern);
+        return m ? m[1] : null;
+      };
+
       const h2hMatch = pageText.match(/H2H Record\s*(\d+)\s*-\s*(\d+)/i);
       const setsMatch = pageText.match(/Sets Won\s*(\d+)\s*-\s*(\d+)/i);
-
-      // Parse match history table
-      const matchHistory: any[] = [];
-      const rows = document.querySelectorAll('table tr, div[class*="match"]');
-      
-      // Look for date/tournament/result patterns in the page
-      const datePatterns = pageText.match(
-        /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+\s*\d{4})\s+(.+?)\s+(?:Hard|Clay|Grass)\s+.*?(\d+)\s*-\s*(\d+)/gi
-      );
-
-      if (datePatterns) {
-        datePatterns.forEach((match) => {
-          const parts = match.match(
-            /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+\s*\d{4})\s+(.+?)\s+(Hard|Clay|Grass)\s+.*?(\d+)\s*-\s*(\d+)/i
-          );
-          if (parts) {
-            matchHistory.push({
-              date: parts[1],
-              tournament: parts[2].trim(),
-              surface: parts[3],
-              player1Sets: parseInt(parts[4]),
-              player2Sets: parseInt(parts[5]),
-              winner: parseInt(parts[4]) > parseInt(parts[5]) ? player1 : player2,
-            });
-          }
-        });
-      }
-
-      // Parse comparison stats table
-      const comparison: any[] = [];
-      const statRows = document.querySelectorAll('table tr');
-      statRows.forEach((row) => {
-        const cells = row.querySelectorAll('td');
-        if (cells.length >= 3) {
-          comparison.push({
-            metric: cells[0]?.textContent?.trim() || '',
-            player1Value: cells[1]?.textContent?.trim() || '',
-            player2Value: cells[2]?.textContent?.trim() || '',
-          });
-        }
-      });
 
       return {
         player1,
@@ -432,8 +465,8 @@ export class TennisStatsScraper {
           player1: setsMatch ? parseInt(setsMatch[1]) : 0,
           player2: setsMatch ? parseInt(setsMatch[2]) : 0,
         },
-        matchHistory,
-        comparison,
+        matchHistory: [],
+        comparison: [],
       };
     });
 
@@ -454,15 +487,15 @@ export class TennisStatsScraper {
       const entries: any[] = [];
       const playerLinks = document.querySelectorAll('a[href*="/players/"]');
       
-      playerLinks.forEach((link) => {
+      playerLinks.forEach((link: any) => {
         const row = link.closest('tr') || link.closest('div');
         if (!row) return;
         
-        const text = row.textContent || '';
+        const text = (row.textContent || '').replace(/\s+/g, ' ').trim();
         const rankMatch = text.match(/^(\d+)/);
-        const eloMatch = text.match(/([\d,]+)$/);
-        const name = link.textContent?.trim() || '';
-        const href = (link as HTMLAnchorElement).getAttribute('href') || '';
+        const eloMatch = text.match(/([\d,]+)\s*$/);
+        const name = (link.textContent || '').trim();
+        const href = link.getAttribute('href') || '';
         
         if (name && rankMatch) {
           entries.push({
@@ -481,10 +514,9 @@ export class TennisStatsScraper {
     return rankings;
   }
 
-  // ─── Utility: Extract player slug from match URL ───────────────────────
+  // ─── Utility ───────────────────────────────────────────────────────────
 
   extractPlayerSlug(h2hUrl: string): { player1Slug: string; player2Slug: string } | null {
-    // URL pattern: /h2h/player1-vs-player2-12345
     const match = h2hUrl.match(/\/h2h\/(.+?)-vs-(.+?)-(\d+)$/);
     if (!match) return null;
     return {
