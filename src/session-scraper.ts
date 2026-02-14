@@ -4,8 +4,13 @@
  * Handles login, cookie persistence, and view tracking per account
  */
 
-import puppeteer, { Browser, Page } from 'puppeteer';
+
 import { DailyMatch, PlayerStats, H2HData } from './scraper';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { Browser, Page } from 'puppeteer';
+
+puppeteer.use(StealthPlugin());
 
 export class SessionScraper {
   private browser: Browser | null = null;

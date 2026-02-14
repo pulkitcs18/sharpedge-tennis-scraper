@@ -5,7 +5,11 @@
  * Designed to run on Railway alongside existing Action Network scraper
  */
 
-import puppeteer, { Browser, Page } from 'puppeteer';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { Browser, Page } from 'puppeteer';
+
+puppeteer.use(StealthPlugin());
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -135,10 +139,10 @@ export class TennisStatsScraper {
   async scrapeDailyMatches(date?: string): Promise<DailyMatch[]> {
     const page = await this.newPage();
     const url = date ? `${this.baseUrl}/${date}` : this.baseUrl;
-    
+
     console.log(`[TennisStats] Scraping daily matches from ${url}`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    
+
     // Wait for match links to appear
     await page.waitForSelector('a[href*="/h2h/"]', { timeout: 20000 }).catch(() => {
       console.warn('[TennisStats] No match links found or timeout');
@@ -181,7 +185,7 @@ export class TennisStatsScraper {
 
         // Pattern: form1 Name1 (rank1) [odds1] time/status form2 Name2 (rank2) [odds2] [score]
         // Regex approach: extract chunks around the parenthesized rankings
-        
+
         // Find all (number) patterns for rankings
         const rankingPattern = /\(([^)]+)\)/g;
         const rankings: any[] = [];
@@ -312,13 +316,13 @@ export class TennisStatsScraper {
           // Look for nearby text that indicates gender/category/surface
           const parent = el.closest('div') || el.parentElement;
           const parentText = parent ? parent.textContent || '' : '';
-          
+
           if (parentText.includes('Women')) currentGender = 'Women';
           else currentGender = 'Men';
-          
+
           if (parentText.includes('Doubles')) currentCategory = 'Doubles';
           else currentCategory = 'Singles';
-          
+
           if (parentText.includes('Clay')) currentSurface = 'Clay';
           else if (parentText.includes('Grass')) currentSurface = 'Grass';
           else currentSurface = 'Hard';
@@ -366,7 +370,7 @@ export class TennisStatsScraper {
   async scrapePlayerStats(playerSlug: string): Promise<PlayerStats | null> {
     const page = await this.newPage();
     const url = `${this.baseUrl}/players/${playerSlug}`;
-    
+
     console.log(`[TennisStats] Scraping player: ${playerSlug}`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
@@ -431,7 +435,7 @@ export class TennisStatsScraper {
   async scrapeH2H(h2hPath: string): Promise<H2HData | null> {
     const page = await this.newPage();
     const url = h2hPath.startsWith('http') ? h2hPath : `${this.baseUrl}/h2h/${h2hPath}`;
-    
+
     console.log(`[TennisStats] Scraping H2H: ${url}`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
@@ -479,24 +483,24 @@ export class TennisStatsScraper {
   async scrapeRankings(tour: 'atp' | 'wta'): Promise<RankingEntry[]> {
     const page = await this.newPage();
     const url = `${this.baseUrl}/rankings/${tour}`;
-    
+
     console.log(`[TennisStats] Scraping ${tour.toUpperCase()} rankings`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
     const rankings = await page.evaluate(() => {
       const entries: any[] = [];
       const playerLinks = document.querySelectorAll('a[href*="/players/"]');
-      
+
       playerLinks.forEach((link: any) => {
         const row = link.closest('tr') || link.closest('div');
         if (!row) return;
-        
+
         const text = (row.textContent || '').replace(/\s+/g, ' ').trim();
         const rankMatch = text.match(/^(\d+)/);
         const eloMatch = text.match(/([\d,]+)\s*$/);
         const name = (link.textContent || '').trim();
         const href = link.getAttribute('href') || '';
-        
+
         if (name && rankMatch) {
           entries.push({
             rank: parseInt(rankMatch[1]),
@@ -506,7 +510,7 @@ export class TennisStatsScraper {
           });
         }
       });
-      
+
       return entries;
     });
 
