@@ -1,28 +1,36 @@
 /**
- * TennisStats Scraper — Premium Cookie Mode
+ * TennisStats Scraper — Premium Cookie Mode v2
  * 
- * Uses manually exported browser cookies from one Premium account
- * to scrape all match data including H2H and player stats.
- * 
- * No login needed — cookies are stored in Supabase.
- * Re-export cookies every 1-2 weeks when they expire.
+ * Features:
+ * - Tournament filter (only Grand Slams, Masters 1000, ATP/WTA 500+)
+ * - Comprehensive H2H extraction (all stats tables)
+ * - Past 7 days homepage scraping for tournament path
+ * - Cookie-based Cloudflare bypass
  */
 
 import TennisStatsScraper from './scraper';
 import TennisStatsDB from './database';
+import { filterSupportedMatches } from './tournaments';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 
-const DELAY_MS = 2500; // Delay between detail page requests
+const DELAY_MS = 3000; // Delay between H2H page requests
+const DAYS_BACK = 7;   // How many past days to scrape for tournament path
 
 function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+function getDateString(daysAgo: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return d.toISOString().split('T')[0];
+}
+
 async function run() {
   console.log('═══════════════════════════════════════════════════════');
-  console.log('  TennisStats Scraper — Premium Cookie Mode');
+  console.log('  TennisStats Scraper v2 — Premium Cookie Mode');
   console.log('  ' + new Date().toISOString());
   console.log('═══════════════════════════════════════════════════════\n');
 
@@ -32,32 +40,67 @@ async function run() {
   try {
     await scraper.init();
 
-    // ── Step 1: Load cookies from Supabase ──────────────────────
+    // ── Step 1: Load cookies ────────────────────────────────────
     console.log('🔑 Loading Premium account cookies...');
     const account = await db.getActiveAccount();
     
     if (!account || !account.session_cookies) {
       console.error('❌ No cookies found! Please export cookies from your browser.');
-      console.error('   See README for instructions.');
       process.exit(1);
     }
-    
     console.log('   ✓ Loaded cookies for: ' + account.username);
 
-    // ── Step 2: Scrape homepage (FREE, no cookies needed) ───────
-    console.log('\n📅 Phase 1: Scraping homepage...');
+    // ── Step 2: Scrape today's homepage ─────────────────────────
+    console.log('\n📅 Phase 1: Scraping today\'s matches...');
     const allMatches = await scraper.scrapeDailyMatches(undefined, account.session_cookies);
-    const singlesMatches = allMatches.filter((m) => m.category === 'Singles');
+    
+    // Filter to singles only
+    const singlesMatches = allMatches.filter(m => m.category === 'Singles');
+    console.log('   Total: ' + allMatches.length + ' matches, ' + singlesMatches.length + ' singles');
 
-    console.log('   Found ' + allMatches.length + ' total, ' + singlesMatches.length + ' singles');
+    // Filter to supported tournaments only
+    const supportedMatches = filterSupportedMatches(singlesMatches);
+    console.log('   Supported tournaments: ' + supportedMatches.length + ' matches');
 
-    const today = new Date().toISOString().split('T')[0];
-    await db.upsertDailyMatches(singlesMatches, today);
-    console.log('   ✓ Saved ' + singlesMatches.length + ' matches');
+    const today = getDateString(0);
+    await db.upsertDailyMatches(supportedMatches, today);
+    console.log('   ✓ Saved ' + supportedMatches.length + ' matches for ' + today);
 
-    // ── Step 3: Scrape H2H detail pages (Premium, needs cookies) ─
-    const upcoming = singlesMatches.filter(m => m.status === 'upcoming' && m.h2hUrl);
-    console.log('\n🔍 Phase 2: Scraping ' + upcoming.length + ' H2H detail pages...');
+    // ── Step 3: Scrape past days for tournament path ────────────
+    console.log('\n📆 Phase 2: Scraping past ' + DAYS_BACK + ' days for tournament path...');
+    
+    for (let i = 1; i <= DAYS_BACK; i++) {
+      const pastDate = getDateString(i);
+      
+      // Check if we already have data for this date
+      const { data: existingData } = await db['supabase']
+        .from('tennis_daily_matches')
+        .select('id')
+        .eq('match_date', pastDate)
+        .limit(1);
+      
+      if (existingData && existingData.length > 0) {
+        console.log('   ⏭ ' + pastDate + ' — already scraped');
+        continue;
+      }
+
+      const pastMatches = await scraper.scrapeDailyMatches(pastDate, account.session_cookies);
+      const pastSingles = pastMatches.filter(m => m.category === 'Singles');
+      const pastSupported = filterSupportedMatches(pastSingles);
+      
+      if (pastSupported.length > 0) {
+        await db.upsertDailyMatches(pastSupported, pastDate);
+        console.log('   ✓ ' + pastDate + ' — ' + pastSupported.length + ' matches saved');
+      } else {
+        console.log('   · ' + pastDate + ' — no supported matches');
+      }
+      
+      await sleep(2000);
+    }
+
+    // ── Step 4: Scrape H2H detail pages ─────────────────────────
+    const upcoming = supportedMatches.filter(m => m.status === 'upcoming' && m.h2hUrl);
+    console.log('\n🔍 Phase 3: Scraping ' + upcoming.length + ' H2H detail pages...');
     
     let successCount = 0;
     let errorCount = 0;
@@ -66,6 +109,7 @@ async function run() {
     for (let i = 0; i < upcoming.length; i++) {
       const match = upcoming[i];
       const shortName = match.player1.name.split(' ').pop() + ' vs ' + match.player2.name.split(' ').pop();
+      const tournamentLabel = match.tournamentOfficialName || match.tournament;
       
       try {
         const h2hData = await scraper.scrapeH2HWithCookies(
@@ -74,29 +118,33 @@ async function run() {
         );
 
         if (h2hData === null) {
-          console.log('   ⚠ [' + (i + 1) + '/' + upcoming.length + '] ' + shortName + ' — no data or cookies expired');
+          console.log('   ⚠ [' + (i + 1) + '/' + upcoming.length + '] ' + shortName + ' — no data');
           errorCount++;
           
-          // If first few requests all fail, cookies are likely expired
           if (i < 3 && errorCount >= 3) {
             console.error('\n❌ Cookies appear expired! Please re-export from browser.');
             cookieExpired = true;
             break;
           }
         } else {
-          // Save H2H data
           await db.upsertH2H(h2hData);
           
-          // Save player stats if available
-          if (h2hData.player1Stats) {
-            await db.upsertPlayer(h2hData.player1Stats);
-          }
-          if (h2hData.player2Stats) {
-            await db.upsertPlayer(h2hData.player2Stats);
-          }
+          // Log key stats
+          const statsFound = [
+            h2hData.p1H2HWins + h2hData.p2H2HWins > 0 ? 'H2H' : '',
+            h2hData.p1MatchWinsPct > 0 ? 'Win%' : '',
+            h2hData.p1AcesPerMatch > 0 ? 'Aces' : '',
+            h2hData.p1BreaksPerMatch > 0 ? 'Breaks' : '',
+            h2hData.p1AvgGamesPerSet > 0 ? 'Games' : '',
+            h2hData.p1DoubleFaultsPerMatch > 0 ? 'DFs' : '',
+            h2hData.p1TiebreaksPerMatch > 0 ? 'TBs' : '',
+            h2hData.matchHistory.length > 0 ? 'History(' + h2hData.matchHistory.length + ')' : '',
+          ].filter(Boolean).join(', ');
 
           console.log('   ✓ [' + (i + 1) + '/' + upcoming.length + '] ' + shortName + 
-            ' (H2H: ' + h2hData.h2hRecord.player1Wins + '-' + h2hData.h2hRecord.player2Wins + ')');
+            ' | ' + tournamentLabel +
+            ' | H2H: ' + h2hData.p1H2HWins + '-' + h2hData.p2H2HWins +
+            ' | Data: ' + statsFound);
           successCount++;
         }
       } catch (err: any) {
@@ -104,7 +152,6 @@ async function run() {
         errorCount++;
       }
 
-      // Rate limit
       if (i < upcoming.length - 1) {
         await sleep(DELAY_MS);
       }
@@ -113,9 +160,9 @@ async function run() {
     // ── Summary ──────────────────────────────────────────────────
     console.log('\n═══════════════════════════════════════════════════════');
     console.log('  Scraping Complete!');
-    console.log('  Singles matches:     ' + singlesMatches.length);
+    console.log('  Today\'s matches:     ' + supportedMatches.length + ' (from supported tournaments)');
     console.log('  H2H pages scraped:   ' + successCount);
-    console.log('  Errors:              ' + errorCount);
+    console.log('  H2H errors:          ' + errorCount);
     if (cookieExpired) {
       console.log('  ⚠ COOKIES EXPIRED — re-export from browser!');
     }
