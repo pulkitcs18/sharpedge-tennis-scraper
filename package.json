@@ -1,7 +1,7 @@
 {
   "name": "sharpedge-tennis-scraper",
-  "version": "1.0.0",
-  "description": "TennisStats scraper for SharpEdge tennis predictions",
+  "version": "2.0.0",
+  "description": "TennisStats Premium scraper for SharpEdge tennis predictions",
   "main": "dist/runner.js",
   "scripts": {
     "build": "tsc",
@@ -13,7 +13,7 @@
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "@supabase/supabase-js": "^2.39.0"
-},
+  },
   "devDependencies": {
     "typescript": "^5.3.0",
     "ts-node": "^10.9.0",
