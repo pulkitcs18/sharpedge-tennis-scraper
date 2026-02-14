@@ -73,13 +73,9 @@ async function run() {
       const pastDate = getDateString(i);
       
       // Check if we already have data for this date
-      const { data: existingData } = await db['supabase']
-        .from('tennis_daily_matches')
-        .select('id')
-        .eq('match_date', pastDate)
-        .limit(1);
+      const alreadyScraped = await db.hasMatchesForDate(pastDate);
       
-      if (existingData && existingData.length > 0) {
+      if (alreadyScraped) {
         console.log('   ⏭ ' + pastDate + ' — already scraped');
         continue;
       }

@@ -102,10 +102,10 @@ export function matchTournament(
 /**
  * Filter an array of matches to only supported tournaments
  */
-export function filterSupportedMatches(
-  matches: Array<{ tournament: string; gender: string; [key: string]: any }>
-): Array<{ tournament: string; gender: string; tournamentTier: string; [key: string]: any }> {
-  const supported: any[] = [];
+export function filterSupportedMatches<T extends { tournament: string; gender: string }>(
+  matches: T[]
+): (T & { tournamentTier: string; tournamentOfficialName: string })[] {
+  const supported: (T & { tournamentTier: string; tournamentOfficialName: string })[] = [];
   const skipped = new Set<string>();
 
   for (const match of matches) {
@@ -115,7 +115,7 @@ export function filterSupportedMatches(
         ...match,
         tournamentTier: info.tier,
         tournamentOfficialName: info.name,
-      });
+      } as T & { tournamentTier: string; tournamentOfficialName: string });
     } else {
       skipped.add(match.tournament);
     }

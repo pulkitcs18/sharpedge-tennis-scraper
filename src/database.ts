@@ -145,6 +145,14 @@ export class TennisStatsDB {
       console.error('[DB] Failed to upsert H2H ' + h2h.h2hKey + ':', error.message);
     }
   }
+  async hasMatchesForDate(date: string): Promise<boolean> {
+    const { data } = await this.supabase
+      .from('tennis_daily_matches')
+      .select('id')
+      .eq('match_date', date)
+      .limit(1);
+    return !!(data && data.length > 0);
+  }
 }
 
 export default TennisStatsDB;
