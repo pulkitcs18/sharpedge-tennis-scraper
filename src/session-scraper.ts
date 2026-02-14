@@ -8,7 +8,7 @@
  * - Graceful fallback when views are exhausted
  */
 
-import puppeteer, { Browser, Page, Protocol } from 'puppeteer';
+import puppeteer, { Browser, Page } from 'puppeteer';
 import { DailyMatch, PlayerStats, H2HData } from './scraper';
 
 export class SessionScraper {
@@ -142,7 +142,7 @@ export class SessionScraper {
    */
   async restoreSession(page: Page, serializedCookies: string): Promise<boolean> {
     try {
-      const cookies = JSON.parse(serializedCookies) as Protocol.Network.CookieParam[];
+      const cookies = JSON.parse(serializedCookies);
       await page.setCookie(...cookies);
       return true;
     } catch {
