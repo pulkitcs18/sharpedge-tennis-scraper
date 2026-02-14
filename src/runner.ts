@@ -46,7 +46,7 @@ async function run() {
 
     // ── Step 2: Scrape homepage (FREE, no cookies needed) ───────
     console.log('\n📅 Phase 1: Scraping homepage...');
-    const allMatches = await scraper.scrapeDailyMatches();
+    const allMatches = await scraper.scrapeDailyMatches(undefined, account.session_cookies);
     const singlesMatches = allMatches.filter((m) => m.category === 'Singles');
 
     console.log('   Found ' + allMatches.length + ' total, ' + singlesMatches.length + ' singles');
