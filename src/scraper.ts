@@ -133,6 +133,16 @@ export class TennisStatsScraper {
     });
 
     await new Promise(r => setTimeout(r, 3000));
+    // Debug: check if Cloudflare is blocking
+const bodyText = await page.evaluate(() => document.body.textContent || '');
+if (bodyText.includes('Performing security verification')) {
+  console.error('[TennisStats] ❌ Cloudflare is blocking homepage! IP may be flagged.');
+  console.log('[TennisStats] Page title:', await page.title());
+  await page.close();
+  return [];
+}
+console.log('[TennisStats] Page title:', await page.title());
+console.log('[TennisStats] Page text preview:', bodyText.substring(0, 200));
 
     const matches = await page.evaluate(() => {
       const results: any[] = [];
