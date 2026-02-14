@@ -16,7 +16,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 
 const DELAY_MS = 3000; // Delay between H2H page requests
-const DAYS_BACK = 7;   // How many past days to scrape for tournament path
+const DAYS_BACK = 0;   // How many past days to scrape for tournament path
 
 function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms));
@@ -43,7 +43,7 @@ async function run() {
     // ── Step 1: Load cookies ────────────────────────────────────
     console.log('🔑 Loading Premium account cookies...');
     const account = await db.getActiveAccount();
-    
+
     if (!account || !account.session_cookies) {
       console.error('❌ No cookies found! Please export cookies from your browser.');
       process.exit(1);
@@ -53,7 +53,7 @@ async function run() {
     // ── Step 2: Scrape today's homepage ─────────────────────────
     console.log('\n📅 Phase 1: Scraping today\'s matches...');
     const allMatches = await scraper.scrapeDailyMatches(undefined, account.session_cookies);
-    
+
     // Filter to singles only
     const singlesMatches = allMatches.filter(m => m.category === 'Singles');
     console.log('   Total: ' + allMatches.length + ' matches, ' + singlesMatches.length + ' singles');
@@ -68,13 +68,13 @@ async function run() {
 
     // ── Step 3: Scrape past days for tournament path ────────────
     console.log('\n📆 Phase 2: Scraping past ' + DAYS_BACK + ' days for tournament path...');
-    
+
     for (let i = 1; i <= DAYS_BACK; i++) {
       const pastDate = getDateString(i);
-      
+
       // Check if we already have data for this date
       const alreadyScraped = await db.hasMatchesForDate(pastDate);
-      
+
       if (alreadyScraped) {
         console.log('   ⏭ ' + pastDate + ' — already scraped');
         continue;
@@ -83,21 +83,21 @@ async function run() {
       const pastMatches = await scraper.scrapeDailyMatches(pastDate, account.session_cookies);
       const pastSingles = pastMatches.filter(m => m.category === 'Singles');
       const pastSupported = filterSupportedMatches(pastSingles);
-      
+
       if (pastSupported.length > 0) {
         await db.upsertDailyMatches(pastSupported, pastDate);
         console.log('   ✓ ' + pastDate + ' — ' + pastSupported.length + ' matches saved');
       } else {
         console.log('   · ' + pastDate + ' — no supported matches');
       }
-      
+
       await sleep(2000);
     }
 
     // ── Step 4: Scrape H2H detail pages ─────────────────────────
     const upcoming = supportedMatches.filter(m => m.status === 'upcoming' && m.h2hUrl);
     console.log('\n🔍 Phase 3: Scraping ' + upcoming.length + ' H2H detail pages...');
-    
+
     let successCount = 0;
     let errorCount = 0;
     let cookieExpired = false;
@@ -106,7 +106,7 @@ async function run() {
       const match = upcoming[i];
       const shortName = match.player1.name.split(' ').pop() + ' vs ' + match.player2.name.split(' ').pop();
       const tournamentLabel = match.tournamentOfficialName || match.tournament;
-      
+
       try {
         const h2hData = await scraper.scrapeH2HWithCookies(
           match.h2hUrl,
@@ -116,7 +116,7 @@ async function run() {
         if (h2hData === null) {
           console.log('   ⚠ [' + (i + 1) + '/' + upcoming.length + '] ' + shortName + ' — no data');
           errorCount++;
-          
+
           if (i < 3 && errorCount >= 3) {
             console.error('\n❌ Cookies appear expired! Please re-export from browser.');
             cookieExpired = true;
@@ -124,7 +124,7 @@ async function run() {
           }
         } else {
           await db.upsertH2H(h2hData);
-          
+
           // Log key stats
           const statsFound = [
             h2hData.p1H2HWins + h2hData.p2H2HWins > 0 ? 'H2H' : '',
@@ -137,7 +137,7 @@ async function run() {
             h2hData.matchHistory.length > 0 ? 'History(' + h2hData.matchHistory.length + ')' : '',
           ].filter(Boolean).join(', ');
 
-          console.log('   ✓ [' + (i + 1) + '/' + upcoming.length + '] ' + shortName + 
+          console.log('   ✓ [' + (i + 1) + '/' + upcoming.length + '] ' + shortName +
             ' | ' + tournamentLabel +
             ' | H2H: ' + h2hData.p1H2HWins + '-' + h2hData.p2H2HWins +
             ' | Data: ' + statsFound);
