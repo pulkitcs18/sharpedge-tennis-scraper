@@ -326,35 +326,7 @@ export class TennisStatsScraper {
       }));
       console.log(`[DEBUG] Page structure:`, JSON.stringify(pageCounts));
 
-      // Click "Calendar Year" tabs (uses div.ui-toggle-link-local with data-id)
-      const calTabsClicked = await page.evaluate(() => {
-        const clicked: string[] = [];
-        document.querySelectorAll('.ui-toggle-link-local').forEach((tab: any) => {
-          const text = (tab.textContent || '').trim().toLowerCase();
-          if (text.includes('calendar year') || text.includes('2026')) {
-            tab.click();
-            clicked.push(text);
-          }
-        });
-        return clicked;
-      });
-      console.log(`[DEBUG] Calendar Year tabs clicked: [${calTabsClicked.join(', ')}]`);
-      await new Promise(r => setTimeout(r, 500));
-
-      // Click "3 Set Matches" tabs if present
-      const setTabsClicked = await page.evaluate(() => {
-        const clicked: string[] = [];
-        document.querySelectorAll('.ui-toggle-link-local').forEach((tab: any) => {
-          const text = (tab.textContent || '').trim().toLowerCase();
-          if (text === '3 set matches' || text.includes('3 set')) {
-            tab.click();
-            clicked.push(text);
-          }
-        });
-        return clicked;
-      });
-      console.log(`[DEBUG] 3-Set tabs clicked: [${setTabsClicked.join(', ')}]`);
-      await new Promise(r => setTimeout(r, 500));
+      // No tab clicking — use the default "All Surfaces" view as-is
 
       const data = await page.evaluate((url: string) => {
         // ── Helpers ──────────────────────────────────────────────
