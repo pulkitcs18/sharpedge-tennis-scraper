@@ -132,8 +132,7 @@ export class TennisStatsDB {
       games_over_22_5_pct: h2h.gamesOver22_5Pct || null,
       games_over_23_5_pct: h2h.gamesOver23_5Pct || null,
       games_over_24_5_pct: h2h.gamesOver24_5Pct || null,
-      // Raw fallback
-      comparison_stats: h2h.rawData,
+      comparison_stats: null,
       updated_at: new Date().toISOString(),
     };
 
