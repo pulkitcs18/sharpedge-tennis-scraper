@@ -111,7 +111,7 @@ export interface H2HData {
 export class TennisStatsScraper {
   private browser: Browser | null = null;
   private baseUrl = 'https://tennisstats.com';
-  private h2hDebugDone = false; // Only dump debug HTML for the first H2H page
+  private h2hDebugDone = false;
 
   async init(): Promise<void> {
     this.browser = await puppeteer.launch({
@@ -518,40 +518,24 @@ export class TennisStatsScraper {
           matchHistory.push({ date: dateStr, tournament, surface, winner, score });
         });
 
-        // ── Section 3: Win % Breakdown ──────────────────────────
-        const mwRow = findValue('Win Percentage', 'Match Wins');
-        const ssRow = findValue('Win Percentage', 'Straight Sets');
-        const ssRow2 = ssRow.p1 ? ssRow : findValue('Win Percentage', 'Wins in Straight');
-        const wfbRow = findValue('Win Percentage', 'From Behind');
-        const wfbRow2 = wfbRow.p1 ? wfbRow : findValue('Win Percentage', 'Wins From Behind');
-        const s1Row = findValue('Win Percentage', 'Set 1');
-        const s2Row = findValue('Win Percentage', 'Set 2');
-        const s3Row = findValue('Win Percentage', 'Set 3');
+        // ── Sections 3-8: Just grab FIRST row from each section ──
+        // Each section's first data row is the headline stat we need
+        const empty = { p1: '', p2: '', total: '', p1Full: '', p2Full: '', label: '' };
+        const getFirstRow = (headingKeyword: string) => {
+          const hk = headingKeyword.toLowerCase();
+          for (const [heading, rows] of sectionMap.entries()) {
+            if (!heading.toLowerCase().includes(hk)) continue;
+            if (rows.length > 0) return rows[0];
+          }
+          return empty;
+        };
 
-        // ── Section 4: Aces ─────────────────────────────────────
-        const acesRow = findValue('Aces', 'Aces Per Match');
-        const acesRow2 = acesRow.p1 ? acesRow : findValue('Aces', 'Per Match');
-
-        // ── Section 5: Double Faults ────────────────────────────
-        const dfRow = findValue('Double Faults', 'Double Faults Per Match');
-        const dfRow2 = dfRow.p1 ? dfRow : findValue('Double Faults', 'Per Match');
-
-        // ── Section 6: Breaks ───────────────────────────────────
-        const brRow = findValue('Break', 'Breaks Per Match');
-        const brRow2 = brRow.p1 ? brRow : findValue('Break', 'Per Match');
-
-        // ── Section 7: Tiebreaks ────────────────────────────────
-        const tbRow = findValue('Tie Break', 'Tie Breaks Per Match');
-        const tbRow2 = tbRow.p1 ? tbRow : findValue('Tie Break', 'Per Match');
-
-        // ── Section 8: Match Total Games ────────────────────────
-        const avgGRow = findValue('Match Total Games', 'Average Games');
-        const avgGRow2 = avgGRow.p1 ? avgGRow : findValue('Match Total Games', 'Average');
-        const o205Row = findValue('Match Total Games', 'Over 20.5');
-        const o215Row = findValue('Match Total Games', 'Over 21.5');
-        const o225Row = findValue('Match Total Games', 'Over 22.5');
-        const o235Row = findValue('Match Total Games', 'Over 23.5');
-        const o245Row = findValue('Match Total Games', 'Over 24.5');
+        const winPctRow = getFirstRow('Win Percentage');  // → Match Wins %
+        const acesRow = getFirstRow('Aces');              // → Aces Per Match
+        const dfRow = getFirstRow('Double Faults');       // → DFs Per Match
+        const brRow = getFirstRow('Break');               // → Breaks Per Match
+        const tbRow = getFirstRow('Tie Break');           // → TBs Per Match
+        const gamesRow = getFirstRow('Match Total Games');// → Avg Games in a Set
 
         // ── Build raw dump for debugging ────────────────────────
         const rawData: any = {};
@@ -584,41 +568,44 @@ export class TennisStatsScraper {
           p2Last12mRecord: l12mRow2.p2Full || l12mRow2.p2 || '',
           // Match History
           matchHistory,
-          // Win % Breakdown
-          p1MatchWinsPct: parsePct(mwRow.p1Full || mwRow.p1),
-          p2MatchWinsPct: parsePct(mwRow.p2Full || mwRow.p2),
-          p1StraightSetsPct: parsePct(ssRow2.p1Full || ssRow2.p1),
-          p2StraightSetsPct: parsePct(ssRow2.p2Full || ssRow2.p2),
-          p1WinsFromBehindPct: parsePct(wfbRow2.p1Full || wfbRow2.p1),
-          p2WinsFromBehindPct: parsePct(wfbRow2.p2Full || wfbRow2.p2),
-          p1Set1WinPct: parsePct(s1Row.p1Full || s1Row.p1),
-          p2Set1WinPct: parsePct(s1Row.p2Full || s1Row.p2),
-          p1Set2WinPct: parsePct(s2Row.p1Full || s2Row.p1),
-          p2Set2WinPct: parsePct(s2Row.p2Full || s2Row.p2),
-          p1Set3WinPct: parsePct(s3Row.p1Full || s3Row.p1),
-          p2Set3WinPct: parsePct(s3Row.p2Full || s3Row.p2),
-          // Serve & Return
-          p1AcesPerMatch: parseNum(acesRow2.p1),
-          p2AcesPerMatch: parseNum(acesRow2.p2),
-          acesMatchTotal: parseNum(acesRow2.total),
-          p1DoubleFaultsPerMatch: parseNum(dfRow2.p1),
-          p2DoubleFaultsPerMatch: parseNum(dfRow2.p2),
-          doubleFaultsMatchTotal: parseNum(dfRow2.total),
-          p1BreaksPerMatch: parseNum(brRow2.p1),
-          p2BreaksPerMatch: parseNum(brRow2.p2),
-          breaksMatchTotal: parseNum(brRow2.total),
-          p1TiebreaksPerMatch: parseNum(tbRow2.p1),
-          p2TiebreaksPerMatch: parseNum(tbRow2.p2),
-          tiebreaksAverage: parseNum(tbRow2.total),
-          // Match Total Games
-          p1AvgGamesPerSet: parseNum(avgGRow2.p1),
-          p2AvgGamesPerSet: parseNum(avgGRow2.p2),
-          avgGamesPerSet: parseNum(avgGRow2.total),
-          gamesOver20_5Pct: parsePct(o205Row.total || o205Row.p1),
-          gamesOver21_5Pct: parsePct(o215Row.total || o215Row.p1),
-          gamesOver22_5Pct: parsePct(o225Row.total || o225Row.p1),
-          gamesOver23_5Pct: parsePct(o235Row.total || o235Row.p1),
-          gamesOver24_5Pct: parsePct(o245Row.total || o245Row.p1),
+          // Win % (first row = Match Wins %)
+          p1MatchWinsPct: parsePct(winPctRow.p1Full || winPctRow.p1),
+          p2MatchWinsPct: parsePct(winPctRow.p2Full || winPctRow.p2),
+          p1StraightSetsPct: 0,
+          p2StraightSetsPct: 0,
+          p1WinsFromBehindPct: 0,
+          p2WinsFromBehindPct: 0,
+          p1Set1WinPct: 0,
+          p2Set1WinPct: 0,
+          p1Set2WinPct: 0,
+          p2Set2WinPct: 0,
+          p1Set3WinPct: 0,
+          p2Set3WinPct: 0,
+          // Aces (first row = Aces Per Match)
+          p1AcesPerMatch: parseNum(acesRow.p1),
+          p2AcesPerMatch: parseNum(acesRow.p2),
+          acesMatchTotal: parseNum(acesRow.total),
+          // Double Faults (first row = DFs Per Match)
+          p1DoubleFaultsPerMatch: parseNum(dfRow.p1),
+          p2DoubleFaultsPerMatch: parseNum(dfRow.p2),
+          doubleFaultsMatchTotal: parseNum(dfRow.total),
+          // Breaks (first row = Breaks Per Match)
+          p1BreaksPerMatch: parseNum(brRow.p1),
+          p2BreaksPerMatch: parseNum(brRow.p2),
+          breaksMatchTotal: parseNum(brRow.total),
+          // Tiebreaks (first row = TBs Per Match)
+          p1TiebreaksPerMatch: parseNum(tbRow.p1),
+          p2TiebreaksPerMatch: parseNum(tbRow.p2),
+          tiebreaksAverage: parseNum(tbRow.total),
+          // Match Total Games (first row = Avg Games in a Set)
+          p1AvgGamesPerSet: parseNum(gamesRow.p1),
+          p2AvgGamesPerSet: parseNum(gamesRow.p2),
+          avgGamesPerSet: parseNum(gamesRow.total),
+          gamesOver20_5Pct: 0,
+          gamesOver21_5Pct: 0,
+          gamesOver22_5Pct: 0,
+          gamesOver23_5Pct: 0,
+          gamesOver24_5Pct: 0,
           // Raw
           rawData,
         };
@@ -626,9 +613,20 @@ export class TennisStatsScraper {
 
       await page.close();
 
-      // Log extraction summary for first few pages
+      // Log key values for first H2H page to verify extraction
       if (data && !this.h2hDebugDone) {
-        console.log(`[H2H] Raw sections found:`, JSON.stringify(data.rawData, null, 2).substring(0, 500));
+        this.h2hDebugDone = true;
+        console.log(`[H2H] First page extraction check:`,
+          `Rank: ${data.p1Rank}/${data.p2Rank}`,
+          `| Wins: ${data.p1H2HWins}-${data.p2H2HWins}`,
+          `| Sets: ${data.p1H2HSets}-${data.p2H2HSets}`,
+          `| CY Win%: ${data.p1CalendarYearWinPct}/${data.p2CalendarYearWinPct}`,
+          `| MatchWin%: ${data.p1MatchWinsPct}/${data.p2MatchWinsPct}`,
+          `| Aces: ${data.p1AcesPerMatch}/${data.p2AcesPerMatch}/${data.acesMatchTotal}`,
+          `| Breaks: ${data.p1BreaksPerMatch}/${data.p2BreaksPerMatch}/${data.breaksMatchTotal}`,
+          `| Games: ${data.p1AvgGamesPerSet}/${data.p2AvgGamesPerSet}/${data.avgGamesPerSet}`,
+          `| History: ${data.matchHistory.length} matches`
+        );
       }
 
       return data as H2HData;
