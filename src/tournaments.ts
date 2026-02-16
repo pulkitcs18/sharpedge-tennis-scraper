@@ -55,6 +55,7 @@ const SUPPORTED_TOURNAMENTS: TournamentInfo[] = [
   { name: 'Vienna Open', tier: 'ATP 500', gender: 'Men', keywords: ['vienna'] },
   { name: 'Basel Open', tier: 'ATP 500', gender: 'Men', keywords: ['basel'] },
   { name: 'Dubai Tennis Championships', tier: 'ATP 500', gender: 'Men', keywords: ['dubai'] },
+  { name: 'Qatar Open', tier: 'ATP 500', gender: 'Men', keywords: ['doha', 'qatar'] },
 
   // ── WTA 500 ─────────────────────────────────────────────────
   { name: 'Adelaide International', tier: 'WTA 500', gender: 'Women', keywords: ['adelaide'] },
