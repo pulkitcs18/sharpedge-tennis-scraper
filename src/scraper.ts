@@ -313,26 +313,47 @@ export class TennisStatsScraper {
         return null;
       }
 
+      // DEBUG: Log page element counts
+      const pageCounts = await page.evaluate(() => ({
+        h2s: document.querySelectorAll('h2').length,
+        widgets: document.querySelectorAll('.widget-box-shadow').length,
+        dataTables: document.querySelectorAll('.data-table').length,
+        dataRows: document.querySelectorAll('.data-table-row').length,
+        historyRows: document.querySelectorAll('.h2h-history-row').length,
+        tabs: document.querySelectorAll('.ui-toggle-link-local').length,
+        activeTabs: document.querySelectorAll('.ui-toggle-target.active').length,
+        h1: document.querySelector('h1')?.textContent?.trim() || 'NO H1',
+      }));
+      console.log(`[DEBUG] Page structure:`, JSON.stringify(pageCounts));
+
       // Click "Calendar Year" tabs (uses div.ui-toggle-link-local with data-id)
-      await page.evaluate(() => {
+      const calTabsClicked = await page.evaluate(() => {
+        const clicked: string[] = [];
         document.querySelectorAll('.ui-toggle-link-local').forEach((tab: any) => {
           const text = (tab.textContent || '').trim().toLowerCase();
           if (text.includes('calendar year') || text.includes('2026')) {
             tab.click();
+            clicked.push(text);
           }
         });
+        return clicked;
       });
+      console.log(`[DEBUG] Calendar Year tabs clicked: [${calTabsClicked.join(', ')}]`);
       await new Promise(r => setTimeout(r, 500));
 
       // Click "3 Set Matches" tabs if present
-      await page.evaluate(() => {
+      const setTabsClicked = await page.evaluate(() => {
+        const clicked: string[] = [];
         document.querySelectorAll('.ui-toggle-link-local').forEach((tab: any) => {
           const text = (tab.textContent || '').trim().toLowerCase();
           if (text === '3 set matches' || text.includes('3 set')) {
             tab.click();
+            clicked.push(text);
           }
         });
+        return clicked;
       });
+      console.log(`[DEBUG] 3-Set tabs clicked: [${setTabsClicked.join(', ')}]`);
       await new Promise(r => setTimeout(r, 500));
 
       const data = await page.evaluate((url: string) => {
@@ -422,6 +443,18 @@ export class TennisStatsScraper {
           }
         });
 
+        // DEBUG: Log section map summary
+        const _debugSections: Record<string, any> = {};
+        sectionMap.forEach((rows, heading) => {
+          _debugSections[heading.substring(0, 50)] = {
+            rowCount: rows.length,
+            firstRowLabel: rows[0]?.label?.substring(0, 40) || 'NONE',
+            firstRowP1: rows[0]?.p1?.substring(0, 20) || 'EMPTY',
+            firstRowP2: rows[0]?.p2?.substring(0, 20) || 'EMPTY',
+            firstRowTotal: rows[0]?.total?.substring(0, 20) || 'EMPTY',
+          };
+        });
+
         // Helper: find a value by heading keyword + label keyword
         const findValue = (headingKeyword: string, labelKeyword: string): { p1: string; p2: string; total: string; p1Full: string; p2Full: string } => {
           const hkLower = headingKeyword.toLowerCase();
@@ -453,10 +486,18 @@ export class TennisStatsScraper {
         const winsRow = findValue('Full Stats', 'Wins');
         const setsRow = findValue('Full Stats', 'Sets Won');
         const cyRow = findValue('Full Stats', 'Win Percentage');
-        // Calendar year row has label "Win Percentage 2026 Calendar Year"
         const cyRow2 = cyRow.p1 ? cyRow : findValue('Full Stats', 'Calendar Year');
         const l12mRow = findValue('Full Stats', 'Last 12');
         const l12mRow2 = l12mRow.p1 ? l12mRow : findValue('Full Stats', '12 Month');
+
+        // DEBUG: Full Stats values
+        const _debugFullStats = {
+          rank: `${rankRow.p1} / ${rankRow.p2}`,
+          wins: `${winsRow.p1} / ${winsRow.p2}`,
+          sets: `${setsRow.p1} / ${setsRow.p2}`,
+          cyWinPct: `${cyRow2.p1} / ${cyRow2.p2} (full: ${cyRow2.p1Full} / ${cyRow2.p2Full})`,
+          l12m: `${l12mRow2.p1} / ${l12mRow2.p2} (full: ${l12mRow2.p1Full} / ${l12mRow2.p2Full})`,
+        };
 
         // ── Section 2: Match History (div.h2h-history-row) ──────
         // Structure: 5 child divs per row:
@@ -518,6 +559,19 @@ export class TennisStatsScraper {
           matchHistory.push({ date: dateStr, tournament, surface, winner, score });
         });
 
+        // DEBUG: Match history details
+        const _debugHistory = {
+          totalH2HRows: document.querySelectorAll('.h2h-history-row').length,
+          parsed: matchHistory.length,
+          validH2H: matchHistory.filter(m => /^\d+-\d+$/.test(m.score) && m.winner).length,
+          invalidEntries: matchHistory.filter(m => !/^\d+-\d+$/.test(m.score) || !m.winner).map(m => ({
+            date: m.date, score: m.score, winner: m.winner || 'NO_WINNER',
+          })).slice(0, 5),
+          validEntries: matchHistory.filter(m => /^\d+-\d+$/.test(m.score) && m.winner).map(m => ({
+            date: m.date, score: m.score, winner: m.winner, surface: m.surface,
+          })),
+        };
+
         // ── Sections 3-8: Just grab FIRST row from each section ──
         // Each section's first data row is the headline stat we need
         const empty = { p1: '', p2: '', total: '', p1Full: '', p2Full: '', label: '' };
@@ -536,6 +590,16 @@ export class TennisStatsScraper {
         const brRow = getFirstRow('Break');               // → Breaks Per Match
         const tbRow = getFirstRow('Tie Break');           // → TBs Per Match
         const gamesRow = getFirstRow('Match Total Games');// → Avg Games in a Set
+
+        // DEBUG: First row values from each section
+        const _debugFirstRows = {
+          winPct: { label: (winPctRow as any).label, p1: winPctRow.p1, p2: winPctRow.p2, p1Full: winPctRow.p1Full, p2Full: winPctRow.p2Full },
+          aces: { label: (acesRow as any).label, p1: acesRow.p1, p2: acesRow.p2, total: acesRow.total },
+          dfs: { label: (dfRow as any).label, p1: dfRow.p1, p2: dfRow.p2, total: dfRow.total },
+          breaks: { label: (brRow as any).label, p1: brRow.p1, p2: brRow.p2, total: brRow.total },
+          tiebreaks: { label: (tbRow as any).label, p1: tbRow.p1, p2: tbRow.p2, total: tbRow.total },
+          games: { label: (gamesRow as any).label, p1: gamesRow.p1, p2: gamesRow.p2, total: gamesRow.total },
+        };
 
         // ── Build raw dump for debugging ────────────────────────
         const rawData: any = {};
@@ -608,25 +672,49 @@ export class TennisStatsScraper {
           gamesOver24_5Pct: 0,
           // Raw
           rawData,
+          // DEBUG: all debug data bundled for logging
+          _debug: {
+            sections: _debugSections,
+            fullStats: _debugFullStats,
+            history: _debugHistory,
+            firstRows: _debugFirstRows,
+          },
         };
       }, h2hUrl);
 
       await page.close();
 
-      // Log key values for first H2H page to verify extraction
+      // DEBUG: Log full extraction details for first H2H page
       if (data && !this.h2hDebugDone) {
         this.h2hDebugDone = true;
-        console.log(`[H2H] First page extraction check:`,
-          `Rank: ${data.p1Rank}/${data.p2Rank}`,
-          `| Wins: ${data.p1H2HWins}-${data.p2H2HWins}`,
-          `| Sets: ${data.p1H2HSets}-${data.p2H2HSets}`,
-          `| CY Win%: ${data.p1CalendarYearWinPct}/${data.p2CalendarYearWinPct}`,
-          `| MatchWin%: ${data.p1MatchWinsPct}/${data.p2MatchWinsPct}`,
-          `| Aces: ${data.p1AcesPerMatch}/${data.p2AcesPerMatch}/${data.acesMatchTotal}`,
-          `| Breaks: ${data.p1BreaksPerMatch}/${data.p2BreaksPerMatch}/${data.breaksMatchTotal}`,
-          `| Games: ${data.p1AvgGamesPerSet}/${data.p2AvgGamesPerSet}/${data.avgGamesPerSet}`,
-          `| History: ${data.matchHistory.length} matches`
-        );
+        const d = (data as any)._debug;
+        console.log(`\n[DEBUG] ═══ FULL H2H EXTRACTION REPORT ═══`);
+        console.log(`[DEBUG] Players: ${data.player1} vs ${data.player2}`);
+        console.log(`[DEBUG] URL: ${h2hUrl}`);
+        console.log(`[DEBUG]\n── Section Map ──`);
+        console.log(JSON.stringify(d.sections, null, 2));
+        console.log(`[DEBUG]\n── Full Stats Raw Values ──`);
+        console.log(JSON.stringify(d.fullStats, null, 2));
+        console.log(`[DEBUG]\n── First Row Per Section ──`);
+        console.log(JSON.stringify(d.firstRows, null, 2));
+        console.log(`[DEBUG]\n── Match History ──`);
+        console.log(JSON.stringify(d.history, null, 2));
+        console.log(`[DEBUG]\n── Final Parsed Values ──`);
+        console.log(JSON.stringify({
+          rank: `${data.p1Rank} / ${data.p2Rank}`,
+          h2hWins: `${data.p1H2HWins} - ${data.p2H2HWins}`,
+          h2hSets: `${data.p1H2HSets} - ${data.p2H2HSets}`,
+          cyWinPct: `${data.p1CalendarYearWinPct}% / ${data.p2CalendarYearWinPct}%`,
+          l12mWinPct: `${data.p1Last12mWinPct}% / ${data.p2Last12mWinPct}%`,
+          matchWinPct: `${data.p1MatchWinsPct}% / ${data.p2MatchWinsPct}%`,
+          aces: `${data.p1AcesPerMatch} / ${data.p2AcesPerMatch} / ${data.acesMatchTotal}`,
+          dfs: `${data.p1DoubleFaultsPerMatch} / ${data.p2DoubleFaultsPerMatch} / ${data.doubleFaultsMatchTotal}`,
+          breaks: `${data.p1BreaksPerMatch} / ${data.p2BreaksPerMatch} / ${data.breaksMatchTotal}`,
+          tiebreaks: `${data.p1TiebreaksPerMatch} / ${data.p2TiebreaksPerMatch} / ${data.tiebreaksAverage}`,
+          games: `${data.p1AvgGamesPerSet} / ${data.p2AvgGamesPerSet} / ${data.avgGamesPerSet}`,
+          historyCount: data.matchHistory.length,
+        }, null, 2));
+        console.log(`[DEBUG] ═══ END REPORT ═══\n`);
       }
 
       return data as H2HData;
