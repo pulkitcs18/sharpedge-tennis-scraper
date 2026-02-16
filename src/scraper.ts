@@ -326,15 +326,16 @@ export class TennisStatsScraper {
       }));
       console.log(`[DEBUG] Page structure:`, JSON.stringify(pageCounts));
 
-      // Click only "Last 12 Months" tabs for stat sections (Aces, Breaks, DFs, etc.)
-      // Do NOT click surface tabs or set-format tabs
+      // Click "Last 12 Months" tabs ONLY for "All Surfaces" sections (data-id contains "-all-")
+      // Skip surface-specific tabs (hard, clay, grass) to avoid DOM corruption
       const l12mTabsClicked = await page.evaluate(() => {
         const clicked: string[] = [];
         document.querySelectorAll('.ui-toggle-link-local, .ui-toggle-link-local-outer').forEach((tab: any) => {
           const text = (tab.textContent || '').trim().toLowerCase();
-          if (text === 'last 12 months') {
+          const dataId = tab.getAttribute('data-id') || '';
+          if (text === 'last 12 months' && dataId.includes('-all-')) {
             tab.click();
-            clicked.push(tab.getAttribute('data-id') || text);
+            clicked.push(dataId);
           }
         });
         return clicked;
