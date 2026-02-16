@@ -313,33 +313,29 @@ export class TennisStatsScraper {
       }
 
       // Switch stat sections to "Last 12 Months" view (All Surfaces only)
-      const tabsClicked = await page.evaluate(() => {
-        const clicked: string[] = [];
+      // Use Puppeteer's page.click() for real mouse events — element.click() doesn't trigger site JS
+      const l12mDataIds = await page.evaluate(() => {
+        const ids: string[] = [];
         document.querySelectorAll('.ui-toggle-link-local, .ui-toggle-link-local-outer').forEach((tab: any) => {
           const text = (tab.textContent || '').trim().toLowerCase();
           const dataId = tab.getAttribute('data-id') || '';
           if (text === 'last 12 months' && dataId.includes('-all-')) {
-            tab.click();
-            clicked.push(dataId);
+            ids.push(dataId);
           }
         });
-        return clicked;
+        return ids;
       });
-      // Wait for DOM to update after tab clicks — 500ms was too fast
-      await new Promise(r => setTimeout(r, 2000));
 
-      // Verify tabs actually switched by checking which targets are active
-      const activeCheck = await page.evaluate((clickedIds: string[]) => {
-        const results: Record<string, boolean> = {};
-        for (const dataId of clickedIds) {
-          // The clicked tab should now have 'active' class
-          const tab = document.querySelector(`[data-id="${dataId}"]`);
-          results[dataId] = tab?.classList?.contains('active') || false;
+      for (const dataId of l12mDataIds) {
+        try {
+          await page.click(`[data-id="${dataId}"]`);
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          console.warn(`[H2H] Failed to click tab ${dataId}`);
         }
-        return results;
-      }, tabsClicked);
-      console.log(`[H2H] Switched ${tabsClicked.length} sections to Last 12 Months`);
-      console.log(`[H2H] Tab active verification:`, JSON.stringify(activeCheck));
+      }
+      await new Promise(r => setTimeout(r, 1000));
+      console.log(`[H2H] Clicked ${l12mDataIds.length} L12M tabs via Puppeteer: [${l12mDataIds.join(', ')}]`);
 
       // Extract all data from the page
       const data = await page.evaluate((url: string) => {
