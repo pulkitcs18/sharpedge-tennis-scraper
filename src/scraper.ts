@@ -349,10 +349,18 @@ export class TennisStatsScraper {
           return m ? parseFloat(m[1]) : 0;
         };
 
-        // Get the primary text value from a cell (full textContent)
-        // Note: some cells have "38<span>%</span>" where the number is a text node
-        // and % is in a span, so we must use full textContent, not just first span
+        // Get the primary value from a cell. Two HTML patterns:
+        //   Full Stats: <span>3</span>(75.0%)  → span holds the value
+        //   Win %:      38<span class="fs08e">%</span> → text node holds value, span is just "%"
+        // Rule: if first span starts with digit/dot/minus → use it; else use full textContent
         const getCellValue = (cell: Element): string => {
+          const spans = cell.querySelectorAll(':scope > span');
+          if (spans.length > 0) {
+            const first = (spans[0].textContent || '').trim();
+            if (/^[\d.\-]/.test(first) || first === 'N/A') {
+              return first;
+            }
+          }
           return (cell.textContent || '').replace(/\s+/g, ' ').trim();
         };
 
