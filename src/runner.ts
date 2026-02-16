@@ -58,9 +58,10 @@ async function run() {
     const singlesMatches = allMatches.filter(m => m.category === 'Singles');
     console.log('   Total: ' + allMatches.length + ' matches, ' + singlesMatches.length + ' singles');
 
-    // Filter to supported tournaments only
-    const supportedMatches = filterSupportedMatches(singlesMatches);
-    console.log('   Supported tournaments: ' + supportedMatches.length + ' matches');
+    // Filter to supported tournaments only, exclude finished matches
+    const supportedMatches = filterSupportedMatches(singlesMatches)
+      .filter(m => m.status !== 'finished');
+    console.log('   Supported tournaments: ' + supportedMatches.length + ' matches (excluding finished)');
 
     const today = getDateString(0);
     await db.upsertDailyMatches(supportedMatches, today);

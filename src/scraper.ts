@@ -312,30 +312,16 @@ export class TennisStatsScraper {
         return null;
       }
 
-      // Switch stat sections to "Last 12 Months" view (All Surfaces only)
-      // Use Puppeteer's page.click() for real mouse events — element.click() doesn't trigger site JS
-      const l12mDataIds = await page.evaluate(() => {
-        const ids: string[] = [];
-        document.querySelectorAll('.ui-toggle-link-local, .ui-toggle-link-local-outer').forEach((tab: any) => {
-          const text = (tab.textContent || '').trim().toLowerCase();
-          const dataId = tab.getAttribute('data-id') || '';
-          if (text === 'last 12 months' && dataId.includes('-all-')) {
-            ids.push(dataId);
-          }
-        });
-        return ids;
-      });
-
-      for (const dataId of l12mDataIds) {
-        try {
-          await page.click(`[data-id="${dataId}"]`);
-          await new Promise(r => setTimeout(r, 300));
-        } catch (e) {
-          console.warn(`[H2H] Failed to click tab ${dataId}`);
-        }
-      }
-      await new Promise(r => setTimeout(r, 1000));
-      console.log(`[H2H] Clicked ${l12mDataIds.length} L12M tabs via Puppeteer: [${l12mDataIds.join(', ')}]`);
+      // TODO: Switch stat sections to "Last 12 Months" view.
+      // Currently reads default "2026 Calendar Year" data. Multiple approaches tried:
+      //   1. element.click() inside page.evaluate() — adds 'active' to tab button but content panel doesn't switch
+      //   2. Puppeteer page.click() with real mouse events — same result, tab button active but content unchanged
+      // The site likely uses a custom JS toggle mechanism that neither approach triggers.
+      // Possible fixes to try later:
+      //   - page.evaluate(() => { /* dispatch custom event */ })
+      //   - Intercept and modify the page URL to request L12M data directly
+      //   - Use the TennisStats API if one exists (check network tab)
+      //   - Try clicking with page.$eval and dispatchEvent('mousedown') + dispatchEvent('mouseup')
 
       // Extract all data from the page
       const data = await page.evaluate((url: string) => {
