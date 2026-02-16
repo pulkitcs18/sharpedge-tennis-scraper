@@ -111,6 +111,7 @@ export interface H2HData {
 export class TennisStatsScraper {
   private browser: Browser | null = null;
   private baseUrl = 'https://tennisstats.com';
+  private h2hDebugDone = false; // Only dump debug HTML for the first H2H page
 
   async init(): Promise<void> {
     this.browser = await puppeteer.launch({
@@ -304,11 +305,117 @@ export class TennisStatsScraper {
         return null;
       }
 
-      if (!pageText.toLowerCase().includes('head to head') && 
+      if (!pageText.toLowerCase().includes('head to head') &&
           !pageText.toLowerCase().includes('h2h') &&
           !pageText.toLowerCase().includes(' vs ')) {
+        console.log('[DEBUG] Page rejected — no H2H/vs content found. First 500 chars:', pageText.substring(0, 500));
         await page.close();
         return null;
+      }
+
+      // ── DEBUG: Dump HTML structure for FIRST H2H page only ──────────
+      if (!this.h2hDebugDone) {
+        this.h2hDebugDone = true;
+        const debugInfo = await page.evaluate(() => {
+          const tables = document.querySelectorAll('table');
+          const divs = document.querySelectorAll('div');
+
+          // All headings
+          const headings: string[] = [];
+          document.querySelectorAll('h1, h2, h3, h4, h5').forEach((el, i) => {
+            if (i < 30) headings.push(`${el.tagName}: "${(el.textContent || '').trim().substring(0, 120)}"`);
+          });
+
+          // Elements with stat/table/card/h2h/comparison class names
+          const interestingClasses: string[] = [];
+          document.querySelectorAll('[class]').forEach(el => {
+            const cls = el.getAttribute('class') || '';
+            if (/stat|table|card|h2h|comparison|row|grid|data|match|score|record/i.test(cls)) {
+              const tag = el.tagName;
+              const text = (el.textContent || '').trim().substring(0, 80);
+              const entry = `${tag}.${cls.substring(0, 60)} → "${text}"`;
+              if (interestingClasses.length < 40 && !interestingClasses.includes(entry)) {
+                interestingClasses.push(entry);
+              }
+            }
+          });
+
+          // All elements with "data-" attributes
+          const dataAttrs: string[] = [];
+          document.querySelectorAll('[data-stat], [data-type], [data-tab], [data-value]').forEach((el, i) => {
+            if (i < 20) {
+              const attrs: string[] = [];
+              for (const attr of Array.from(el.attributes)) {
+                if (attr.name.startsWith('data-')) attrs.push(`${attr.name}="${attr.value}"`);
+              }
+              dataAttrs.push(`${el.tagName} ${attrs.join(' ')} → "${(el.textContent || '').trim().substring(0, 60)}"`);
+            }
+          });
+
+          // Look for the "Full Stats" section specifically
+          const fullStatsSection: string[] = [];
+          const allElements = document.querySelectorAll('*');
+          let foundFullStats = false;
+          let elemAfterFullStats = 0;
+          allElements.forEach(el => {
+            const text = (el.textContent || '').trim();
+            if (text.includes('Full Stats') && !foundFullStats && el.tagName.match(/^H[1-5]$/)) {
+              foundFullStats = true;
+              fullStatsSection.push(`FOUND HEADING: ${el.tagName} "${text.substring(0, 100)}"`);
+            }
+            if (foundFullStats && elemAfterFullStats < 15) {
+              if (el.tagName === 'TABLE' || el.tagName === 'TR' || el.tagName === 'TD' ||
+                  el.tagName === 'DIV' && el.children.length < 10) {
+                const cls = el.getAttribute('class') || '';
+                fullStatsSection.push(`  ${el.tagName}${cls ? '.' + cls.substring(0, 40) : ''} → "${(el.textContent || '').trim().substring(0, 100)}"`);
+                elemAfterFullStats++;
+              }
+            }
+          });
+
+          // Snapshot of body HTML (first 3000 chars)
+          const bodySnippet = document.body.innerHTML.substring(0, 3000);
+
+          // Count key elements
+          const tableCount = tables.length;
+          const trCount = document.querySelectorAll('tr').length;
+          const tdCount = document.querySelectorAll('td').length;
+
+          return {
+            tableCount,
+            trCount,
+            tdCount,
+            divCount: divs.length,
+            headings,
+            interestingClasses,
+            dataAttrs,
+            fullStatsSection,
+            bodySnippet,
+          };
+        });
+
+        console.log('\n╔══════════════════════════════════════════════════════════════╗');
+        console.log('║  DEBUG: H2H Page HTML Structure Analysis                    ║');
+        console.log('║  URL: ' + h2hUrl);
+        console.log('╚══════════════════════════════════════════════════════════════╝');
+        console.log(`\n📊 Element Counts: ${debugInfo.tableCount} <table>, ${debugInfo.trCount} <tr>, ${debugInfo.tdCount} <td>, ${debugInfo.divCount} <div>`);
+        console.log(`\n📝 Headings (${debugInfo.headings.length}):`);
+        debugInfo.headings.forEach(h => console.log('   ' + h));
+        console.log(`\n🔍 Interesting CSS classes (${debugInfo.interestingClasses.length}):`);
+        debugInfo.interestingClasses.forEach(c => console.log('   ' + c));
+        if (debugInfo.dataAttrs.length > 0) {
+          console.log(`\n🏷️ Data attributes (${debugInfo.dataAttrs.length}):`);
+          debugInfo.dataAttrs.forEach(d => console.log('   ' + d));
+        }
+        if (debugInfo.fullStatsSection.length > 0) {
+          console.log(`\n⭐ "Full Stats" section trace:`);
+          debugInfo.fullStatsSection.forEach(s => console.log('   ' + s));
+        } else {
+          console.log(`\n⚠️ "Full Stats" heading NOT found in any H1-H5`);
+        }
+        console.log(`\n📄 Body HTML snippet (first 3000 chars):`);
+        console.log(debugInfo.bodySnippet);
+        console.log('\n════════════════════ END DEBUG ════════════════════\n');
       }
 
       // Click "2026 Calendar Year" tab and "3 Set Matches" tab if present
