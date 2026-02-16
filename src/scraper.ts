@@ -286,17 +286,17 @@ export class TennisStatsScraper {
     return matches as DailyMatch[];
   }
 
-  // ─── H2H Detail Page — COMPREHENSIVE EXTRACTION ────────────────────────
+  // ─── H2H Detail Page — DIV-BASED EXTRACTION (TennisStats uses divs, not tables) ─
 
   async scrapeH2HWithCookies(h2hUrl: string, cookiesJson: string): Promise<H2HData | null> {
     const page = await this.newPageWithCookies(cookiesJson);
 
     try {
       await page.goto(h2hUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      
-      // Wait for tables to load
-      await page.waitForSelector('table', { timeout: 10000 }).catch(() => {});
-      await new Promise(r => setTimeout(r, 3000));
+
+      // Wait for div-based data containers to load
+      await page.waitForSelector('.data-table-row', { timeout: 10000 }).catch(() => {});
+      await new Promise(r => setTimeout(r, 2000));
 
       // Check Cloudflare
       const pageText = await page.evaluate(() => document.body.textContent || '');
@@ -308,139 +308,32 @@ export class TennisStatsScraper {
       if (!pageText.toLowerCase().includes('head to head') &&
           !pageText.toLowerCase().includes('h2h') &&
           !pageText.toLowerCase().includes(' vs ')) {
-        console.log('[DEBUG] Page rejected — no H2H/vs content found. First 500 chars:', pageText.substring(0, 500));
+        console.log('[H2H] Page rejected — no H2H/vs content. First 300 chars:', pageText.substring(0, 300));
         await page.close();
         return null;
       }
 
-      // ── DEBUG: Dump HTML structure for FIRST H2H page only ──────────
-      if (!this.h2hDebugDone) {
-        this.h2hDebugDone = true;
-        const debugInfo = await page.evaluate(() => {
-          const tables = document.querySelectorAll('table');
-          const divs = document.querySelectorAll('div');
-
-          // All headings
-          const headings: string[] = [];
-          document.querySelectorAll('h1, h2, h3, h4, h5').forEach((el, i) => {
-            if (i < 30) headings.push(`${el.tagName}: "${(el.textContent || '').trim().substring(0, 120)}"`);
-          });
-
-          // Elements with stat/table/card/h2h/comparison class names
-          const interestingClasses: string[] = [];
-          document.querySelectorAll('[class]').forEach(el => {
-            const cls = el.getAttribute('class') || '';
-            if (/stat|table|card|h2h|comparison|row|grid|data|match|score|record/i.test(cls)) {
-              const tag = el.tagName;
-              const text = (el.textContent || '').trim().substring(0, 80);
-              const entry = `${tag}.${cls.substring(0, 60)} → "${text}"`;
-              if (interestingClasses.length < 40 && !interestingClasses.includes(entry)) {
-                interestingClasses.push(entry);
-              }
-            }
-          });
-
-          // All elements with "data-" attributes
-          const dataAttrs: string[] = [];
-          document.querySelectorAll('[data-stat], [data-type], [data-tab], [data-value]').forEach((el, i) => {
-            if (i < 20) {
-              const attrs: string[] = [];
-              for (const attr of Array.from(el.attributes)) {
-                if (attr.name.startsWith('data-')) attrs.push(`${attr.name}="${attr.value}"`);
-              }
-              dataAttrs.push(`${el.tagName} ${attrs.join(' ')} → "${(el.textContent || '').trim().substring(0, 60)}"`);
-            }
-          });
-
-          // Look for the "Full Stats" section specifically
-          const fullStatsSection: string[] = [];
-          const allElements = document.querySelectorAll('*');
-          let foundFullStats = false;
-          let elemAfterFullStats = 0;
-          allElements.forEach(el => {
-            const text = (el.textContent || '').trim();
-            if (text.includes('Full Stats') && !foundFullStats && el.tagName.match(/^H[1-5]$/)) {
-              foundFullStats = true;
-              fullStatsSection.push(`FOUND HEADING: ${el.tagName} "${text.substring(0, 100)}"`);
-            }
-            if (foundFullStats && elemAfterFullStats < 15) {
-              if (el.tagName === 'TABLE' || el.tagName === 'TR' || el.tagName === 'TD' ||
-                  el.tagName === 'DIV' && el.children.length < 10) {
-                const cls = el.getAttribute('class') || '';
-                fullStatsSection.push(`  ${el.tagName}${cls ? '.' + cls.substring(0, 40) : ''} → "${(el.textContent || '').trim().substring(0, 100)}"`);
-                elemAfterFullStats++;
-              }
-            }
-          });
-
-          // Snapshot of body HTML (first 3000 chars)
-          const bodySnippet = document.body.innerHTML.substring(0, 3000);
-
-          // Count key elements
-          const tableCount = tables.length;
-          const trCount = document.querySelectorAll('tr').length;
-          const tdCount = document.querySelectorAll('td').length;
-
-          return {
-            tableCount,
-            trCount,
-            tdCount,
-            divCount: divs.length,
-            headings,
-            interestingClasses,
-            dataAttrs,
-            fullStatsSection,
-            bodySnippet,
-          };
-        });
-
-        console.log('\n╔══════════════════════════════════════════════════════════════╗');
-        console.log('║  DEBUG: H2H Page HTML Structure Analysis                    ║');
-        console.log('║  URL: ' + h2hUrl);
-        console.log('╚══════════════════════════════════════════════════════════════╝');
-        console.log(`\n📊 Element Counts: ${debugInfo.tableCount} <table>, ${debugInfo.trCount} <tr>, ${debugInfo.tdCount} <td>, ${debugInfo.divCount} <div>`);
-        console.log(`\n📝 Headings (${debugInfo.headings.length}):`);
-        debugInfo.headings.forEach(h => console.log('   ' + h));
-        console.log(`\n🔍 Interesting CSS classes (${debugInfo.interestingClasses.length}):`);
-        debugInfo.interestingClasses.forEach(c => console.log('   ' + c));
-        if (debugInfo.dataAttrs.length > 0) {
-          console.log(`\n🏷️ Data attributes (${debugInfo.dataAttrs.length}):`);
-          debugInfo.dataAttrs.forEach(d => console.log('   ' + d));
-        }
-        if (debugInfo.fullStatsSection.length > 0) {
-          console.log(`\n⭐ "Full Stats" section trace:`);
-          debugInfo.fullStatsSection.forEach(s => console.log('   ' + s));
-        } else {
-          console.log(`\n⚠️ "Full Stats" heading NOT found in any H1-H5`);
-        }
-        console.log(`\n📄 Body HTML snippet (first 3000 chars):`);
-        console.log(debugInfo.bodySnippet);
-        console.log('\n════════════════════ END DEBUG ════════════════════\n');
-      }
-
-      // Click "2026 Calendar Year" tab and "3 Set Matches" tab if present
-      // This ensures we get the right data view
+      // Click "Calendar Year" tabs (uses div.ui-toggle-link-local with data-id)
       await page.evaluate(() => {
-        const tabs = document.querySelectorAll('a, button, [role="tab"], .nav-link, .tab');
-        tabs.forEach((tab: any) => {
+        document.querySelectorAll('.ui-toggle-link-local').forEach((tab: any) => {
           const text = (tab.textContent || '').trim().toLowerCase();
           if (text.includes('calendar year') || text.includes('2026')) {
             tab.click();
           }
         });
       });
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 500));
 
+      // Click "3 Set Matches" tabs if present
       await page.evaluate(() => {
-        const tabs = document.querySelectorAll('a, button, [role="tab"], .nav-link, .tab');
-        tabs.forEach((tab: any) => {
+        document.querySelectorAll('.ui-toggle-link-local').forEach((tab: any) => {
           const text = (tab.textContent || '').trim().toLowerCase();
           if (text === '3 set matches' || text.includes('3 set')) {
             tab.click();
           }
         });
       });
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 500));
 
       const data = await page.evaluate((url: string) => {
         // ── Helpers ──────────────────────────────────────────────
@@ -456,65 +349,92 @@ export class TennisStatsScraper {
           return m ? parseFloat(m[1]) : 0;
         };
 
-        // Scan ALL tables on page and build a structured map
-        const allTableData: Array<{ heading: string; rows: Array<{ label: string; p1: string; p2: string; total: string }> }> = [];
-
-        // Strategy: Walk through the DOM looking for heading + table pairs
-        const allElements = document.body.querySelectorAll('*');
-        let currentHeading = '';
-        
-        allElements.forEach(el => {
-          // Track headings
-          if (['H1', 'H2', 'H3', 'H4', 'H5'].includes(el.tagName)) {
-            const t = (el.textContent || '').trim();
-            if (t.length > 2 && t.length < 200) {
-              currentHeading = t;
-            }
+        // Get the primary text value from a cell (first <span> text)
+        const getCellValue = (cell: Element): string => {
+          const spans = cell.querySelectorAll(':scope > span');
+          if (spans.length > 0) {
+            return (spans[0].textContent || '').trim();
           }
-          
-          // Process tables
-          if (el.tagName === 'TABLE') {
-            const rows: Array<{ label: string; p1: string; p2: string; total: string }> = [];
-            const trs = el.querySelectorAll('tr');
-            
-            trs.forEach(tr => {
-              const tds = tr.querySelectorAll('td');
-              if (tds.length >= 3) {
-                const label = (tds[0].textContent || '').trim();
-                const p1 = (tds[1].textContent || '').trim();
-                const p2 = (tds[2].textContent || '').trim();
-                const total = tds.length >= 4 ? (tds[3].textContent || '').trim() : '';
-                if (label && label.length < 100) {
-                  rows.push({ label, p1, p2, total });
-                }
+          return (cell.textContent || '').replace(/\s+/g, ' ').trim();
+        };
+
+        // Get full text of a cell (all spans combined)
+        const getCellFullText = (cell: Element): string => {
+          return (cell.textContent || '').replace(/\s+/g, ' ').trim();
+        };
+
+        // ── Build section map: H2 heading → data-table-rows ─────
+        // Structure: div.widget-box-shadow contains div.widget-header > h2
+        //   and div.data-table > div.data-table-row children
+        //   For tabbed sections: div.ui-toggle-target.active > div.data-table
+        type SectionRow = { label: string; p1: string; p2: string; total: string; p1Full: string; p2Full: string };
+        const sectionMap: Map<string, SectionRow[]> = new Map();
+
+        document.querySelectorAll('h2').forEach(h2 => {
+          const heading = (h2.textContent || '').trim();
+          if (!heading || heading.length > 200) return;
+
+          // Walk up to the widget container
+          let widget: Element | null = h2;
+          while (widget && !(widget.classList?.contains('widget-box-shadow') || widget.classList?.contains('widget-sidebar-ranking'))) {
+            widget = widget.parentElement;
+          }
+          if (!widget) return;
+
+          // For tabbed sections, prefer the active toggle target
+          const activeTarget = widget.querySelector('.ui-toggle-target.active');
+          const container = activeTarget || widget;
+
+          // Find all data-table containers within
+          const dataTables = container.querySelectorAll('.data-table');
+          const rows: SectionRow[] = [];
+
+          dataTables.forEach(dt => {
+            dt.querySelectorAll('.data-table-row').forEach(row => {
+              const children = Array.from(row.children) as Element[];
+              if (children.length < 2) return;
+
+              // First child (with .fitem class) is the label
+              const labelCell = children[0];
+              const label = getCellFullText(labelCell);
+
+              // Remaining children are P1, P2, and optionally Total
+              const p1 = children.length > 1 ? getCellValue(children[1]) : '';
+              const p2 = children.length > 2 ? getCellValue(children[2]) : '';
+              const total = children.length > 3 ? getCellValue(children[3]) : '';
+              const p1Full = children.length > 1 ? getCellFullText(children[1]) : '';
+              const p2Full = children.length > 2 ? getCellFullText(children[2]) : '';
+
+              if (label) {
+                rows.push({ label, p1, p2, total, p1Full, p2Full });
               }
             });
-            
-            if (rows.length > 0) {
-              allTableData.push({ heading: currentHeading, rows });
-            }
+          });
+
+          if (rows.length > 0) {
+            sectionMap.set(heading, rows);
           }
         });
 
-        // Helper: find rows by heading keyword and label keyword
-        const findValue = (headingKeyword: string, labelKeyword: string): { p1: string; p2: string; total: string } => {
+        // Helper: find a value by heading keyword + label keyword
+        const findValue = (headingKeyword: string, labelKeyword: string): { p1: string; p2: string; total: string; p1Full: string; p2Full: string } => {
           const hkLower = headingKeyword.toLowerCase();
           const lkLower = labelKeyword.toLowerCase();
-          
-          for (const table of allTableData) {
-            if (!table.heading.toLowerCase().includes(hkLower)) continue;
-            for (const row of table.rows) {
+
+          for (const [heading, rows] of sectionMap.entries()) {
+            if (!heading.toLowerCase().includes(hkLower)) continue;
+            for (const row of rows) {
               if (row.label.toLowerCase().includes(lkLower)) {
-                return { p1: row.p1, p2: row.p2, total: row.total };
+                return row;
               }
             }
           }
-          return { p1: '', p2: '', total: '' };
+          return { p1: '', p2: '', total: '', p1Full: '', p2Full: '' };
         };
 
-        // ── Extract Player Names ────────────────────────────────
+        // ── Extract Player Names from H1 ────────────────────────
         const h1 = document.querySelector('h1')?.textContent || '';
-        const vsMatch = h1.match(/(.+?)\s+vs\.?\s+(.+?)(?:\s+Head|\s+H2H|\s*$)/i);
+        const vsMatch = h1.match(/(.+?)\s+vs\.?\s+(.+?)(?:\s+Head|\s+H2H|\s+Stats|\s*$)/i);
         if (!vsMatch) return null;
 
         const player1 = vsMatch[1].trim();
@@ -526,83 +446,81 @@ export class TennisStatsScraper {
         const rankRow = findValue('Full Stats', 'Current Rank');
         const winsRow = findValue('Full Stats', 'Wins');
         const setsRow = findValue('Full Stats', 'Sets Won');
-        const cyRow = findValue('Full Stats', 'Calendar Year');
-        // Fallback: also check for year-specific labels
-        const cyRow2 = cyRow.p1 ? cyRow : findValue('Full Stats', '202');
+        const cyRow = findValue('Full Stats', 'Win Percentage');
+        // Calendar year row has label "Win Percentage 2026 Calendar Year"
+        const cyRow2 = cyRow.p1 ? cyRow : findValue('Full Stats', 'Calendar Year');
         const l12mRow = findValue('Full Stats', 'Last 12');
-        // Fallback
         const l12mRow2 = l12mRow.p1 ? l12mRow : findValue('Full Stats', '12 Month');
 
-        // ── Section 2: Match History ────────────────────────────
-        const matchHistory: any[] = [];
-        for (const table of allTableData) {
-          if (!table.heading.toLowerCase().includes('head-to-head record') &&
-              !table.heading.toLowerCase().includes('h2h record')) continue;
-          
-          for (const row of table.rows) {
-            // Rows with dates like "Nov 1 2025" or "Feb 25 2025"
-            const dateMatch = row.label.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);
-            if (dateMatch) {
-              // In the H2H record table: Date | Tournament | Score/Result
-              const scoreMatch = (row.p2 + ' ' + row.total).match(/(\d+)\s*-\s*(\d+)/);
-              matchHistory.push({
-                date: row.label,
-                tournament: row.p1,
-                surface: row.p1.toLowerCase().includes('clay') ? 'Clay' : 
-                         row.p1.toLowerCase().includes('grass') ? 'Grass' : 'Hard',
-                winner: '', // Will determine from bold/highlight
-                score: scoreMatch ? scoreMatch[0] : row.p2,
-              });
-            }
-          }
-        }
+        // ── Section 2: Match History (div.h2h-history-row) ──────
+        const matchHistory: Array<{ date: string; tournament: string; surface: string; winner: string; score: string }> = [];
+        document.querySelectorAll('.h2h-history-row').forEach(row => {
+          const text = (row.textContent || '').replace(/\s+/g, ' ').trim();
 
-        // Also try scanning for the history table by looking at all tables with date patterns
-        if (matchHistory.length === 0) {
-          for (const table of allTableData) {
-            for (const row of table.rows) {
-              const fullText = row.label + ' ' + row.p1 + ' ' + row.p2 + ' ' + row.total;
-              const dateMatch = fullText.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}[\s,]+\d{4}/i);
-              const scoreMatch = fullText.match(/(\d+)\s*-\s*(\d+)/);
-              if (dateMatch && scoreMatch) {
-                matchHistory.push({
-                  date: dateMatch[0],
-                  tournament: row.p1 || row.label,
-                  surface: 'Hard',
-                  winner: '',
-                  score: scoreMatch[0],
-                });
-              }
-            }
-          }
-        }
+          // Extract date (e.g., "Nov 1 2025", "Feb 25 2025")
+          const dateMatch = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}[\s,]+\d{4}/i);
+          if (!dateMatch) return;
+
+          // Extract score (e.g., "2-0", "2-1")
+          const scoreMatch = text.match(/(\d+)\s*-\s*(\d+)/);
+
+          // Extract tournament name — usually between date and surface/score
+          // Look for text patterns
+          const tournamentMatch = text.match(/\d{4}\s+(.+?)(?:\s+Hard|\s+Clay|\s+Grass|\s+\d+-\d+)/i);
+          const tournament = tournamentMatch ? tournamentMatch[1].trim() : '';
+
+          // Surface detection
+          let surface = 'Hard';
+          if (text.toLowerCase().includes('clay')) surface = 'Clay';
+          else if (text.toLowerCase().includes('grass')) surface = 'Grass';
+
+          // Winner detection: look for bold element within the row
+          let winner = '';
+          const boldEls = row.querySelectorAll('.bold, .good, strong, b');
+          boldEls.forEach(b => {
+            const bText = (b.textContent || '').trim();
+            if (bText.includes(player1.split(' ').pop() || '')) winner = player1;
+            else if (bText.includes(player2.split(' ').pop() || '')) winner = player2;
+          });
+
+          matchHistory.push({
+            date: dateMatch[0],
+            tournament,
+            surface,
+            winner,
+            score: scoreMatch ? scoreMatch[0] : '',
+          });
+        });
 
         // ── Section 3: Win % Breakdown ──────────────────────────
         const mwRow = findValue('Win Percentage', 'Match Wins');
         const ssRow = findValue('Win Percentage', 'Straight Sets');
-        // Fallback for straight sets
         const ssRow2 = ssRow.p1 ? ssRow : findValue('Win Percentage', 'Wins in Straight');
         const wfbRow = findValue('Win Percentage', 'From Behind');
         const wfbRow2 = wfbRow.p1 ? wfbRow : findValue('Win Percentage', 'Wins From Behind');
-        const s1Row = findValue('Win Percentage', 'Set 1 Win');
-        const s2Row = findValue('Win Percentage', 'Set 2 Win');
-        const s3Row = findValue('Win Percentage', 'Set 3 Win');
+        const s1Row = findValue('Win Percentage', 'Set 1');
+        const s2Row = findValue('Win Percentage', 'Set 2');
+        const s3Row = findValue('Win Percentage', 'Set 3');
 
         // ── Section 4: Aces ─────────────────────────────────────
         const acesRow = findValue('Aces', 'Aces Per Match');
+        const acesRow2 = acesRow.p1 ? acesRow : findValue('Aces', 'Per Match');
 
         // ── Section 5: Double Faults ────────────────────────────
         const dfRow = findValue('Double Faults', 'Double Faults Per Match');
+        const dfRow2 = dfRow.p1 ? dfRow : findValue('Double Faults', 'Per Match');
 
         // ── Section 6: Breaks ───────────────────────────────────
         const brRow = findValue('Break', 'Breaks Per Match');
+        const brRow2 = brRow.p1 ? brRow : findValue('Break', 'Per Match');
 
         // ── Section 7: Tiebreaks ────────────────────────────────
         const tbRow = findValue('Tie Break', 'Tie Breaks Per Match');
-        const tbRow2 = tbRow.p1 ? tbRow : findValue('Tiebreak', 'Per Match');
+        const tbRow2 = tbRow.p1 ? tbRow : findValue('Tie Break', 'Per Match');
 
         // ── Section 8: Match Total Games ────────────────────────
         const avgGRow = findValue('Match Total Games', 'Average Games');
+        const avgGRow2 = avgGRow.p1 ? avgGRow : findValue('Match Total Games', 'Average');
         const o205Row = findValue('Match Total Games', 'Over 20.5');
         const o215Row = findValue('Match Total Games', 'Over 21.5');
         const o225Row = findValue('Match Total Games', 'Over 22.5');
@@ -611,10 +529,12 @@ export class TennisStatsScraper {
 
         // ── Build raw dump for debugging ────────────────────────
         const rawData: any = {};
-        allTableData.forEach((t, i) => {
-          rawData['table_' + i + '_' + t.heading.substring(0, 40)] = t.rows.slice(0, 5).map(r => ({
-            label: r.label, p1: r.p1, p2: r.p2,
+        let sectionIdx = 0;
+        sectionMap.forEach((rows, heading) => {
+          rawData['section_' + sectionIdx + '_' + heading.substring(0, 40)] = rows.slice(0, 5).map(r => ({
+            label: r.label, p1: r.p1, p2: r.p2, total: r.total,
           }));
+          sectionIdx++;
         });
 
         return {
@@ -628,57 +548,63 @@ export class TennisStatsScraper {
           p2H2HWins: parseNum(winsRow.p2),
           p1H2HSets: parseNum(setsRow.p1),
           p2H2HSets: parseNum(setsRow.p2),
-          p1CalendarYearWinPct: parsePct(cyRow2.p1),
-          p1CalendarYearRecord: cyRow2.p1 || '',
-          p2CalendarYearWinPct: parsePct(cyRow2.p2),
-          p2CalendarYearRecord: cyRow2.p2 || '',
-          p1Last12mWinPct: parsePct(l12mRow2.p1),
-          p1Last12mRecord: l12mRow2.p1 || '',
-          p2Last12mWinPct: parsePct(l12mRow2.p2),
-          p2Last12mRecord: l12mRow2.p2 || '',
+          p1CalendarYearWinPct: parsePct(cyRow2.p1Full || cyRow2.p1),
+          p1CalendarYearRecord: cyRow2.p1Full || cyRow2.p1 || '',
+          p2CalendarYearWinPct: parsePct(cyRow2.p2Full || cyRow2.p2),
+          p2CalendarYearRecord: cyRow2.p2Full || cyRow2.p2 || '',
+          p1Last12mWinPct: parsePct(l12mRow2.p1Full || l12mRow2.p1),
+          p1Last12mRecord: l12mRow2.p1Full || l12mRow2.p1 || '',
+          p2Last12mWinPct: parsePct(l12mRow2.p2Full || l12mRow2.p2),
+          p2Last12mRecord: l12mRow2.p2Full || l12mRow2.p2 || '',
           // Match History
           matchHistory,
           // Win % Breakdown
-          p1MatchWinsPct: parsePct(mwRow.p1),
-          p2MatchWinsPct: parsePct(mwRow.p2),
-          p1StraightSetsPct: parsePct(ssRow2.p1),
-          p2StraightSetsPct: parsePct(ssRow2.p2),
-          p1WinsFromBehindPct: parsePct(wfbRow2.p1),
-          p2WinsFromBehindPct: parsePct(wfbRow2.p2),
-          p1Set1WinPct: parsePct(s1Row.p1),
-          p2Set1WinPct: parsePct(s1Row.p2),
-          p1Set2WinPct: parsePct(s2Row.p1),
-          p2Set2WinPct: parsePct(s2Row.p2),
-          p1Set3WinPct: parsePct(s3Row.p1),
-          p2Set3WinPct: parsePct(s3Row.p2),
+          p1MatchWinsPct: parsePct(mwRow.p1Full || mwRow.p1),
+          p2MatchWinsPct: parsePct(mwRow.p2Full || mwRow.p2),
+          p1StraightSetsPct: parsePct(ssRow2.p1Full || ssRow2.p1),
+          p2StraightSetsPct: parsePct(ssRow2.p2Full || ssRow2.p2),
+          p1WinsFromBehindPct: parsePct(wfbRow2.p1Full || wfbRow2.p1),
+          p2WinsFromBehindPct: parsePct(wfbRow2.p2Full || wfbRow2.p2),
+          p1Set1WinPct: parsePct(s1Row.p1Full || s1Row.p1),
+          p2Set1WinPct: parsePct(s1Row.p2Full || s1Row.p2),
+          p1Set2WinPct: parsePct(s2Row.p1Full || s2Row.p1),
+          p2Set2WinPct: parsePct(s2Row.p2Full || s2Row.p2),
+          p1Set3WinPct: parsePct(s3Row.p1Full || s3Row.p1),
+          p2Set3WinPct: parsePct(s3Row.p2Full || s3Row.p2),
           // Serve & Return
-          p1AcesPerMatch: parseNum(acesRow.p1),
-          p2AcesPerMatch: parseNum(acesRow.p2),
-          acesMatchTotal: parseNum(acesRow.total),
-          p1DoubleFaultsPerMatch: parseNum(dfRow.p1),
-          p2DoubleFaultsPerMatch: parseNum(dfRow.p2),
-          doubleFaultsMatchTotal: parseNum(dfRow.total),
-          p1BreaksPerMatch: parseNum(brRow.p1),
-          p2BreaksPerMatch: parseNum(brRow.p2),
-          breaksMatchTotal: parseNum(brRow.total),
+          p1AcesPerMatch: parseNum(acesRow2.p1),
+          p2AcesPerMatch: parseNum(acesRow2.p2),
+          acesMatchTotal: parseNum(acesRow2.total),
+          p1DoubleFaultsPerMatch: parseNum(dfRow2.p1),
+          p2DoubleFaultsPerMatch: parseNum(dfRow2.p2),
+          doubleFaultsMatchTotal: parseNum(dfRow2.total),
+          p1BreaksPerMatch: parseNum(brRow2.p1),
+          p2BreaksPerMatch: parseNum(brRow2.p2),
+          breaksMatchTotal: parseNum(brRow2.total),
           p1TiebreaksPerMatch: parseNum(tbRow2.p1),
           p2TiebreaksPerMatch: parseNum(tbRow2.p2),
           tiebreaksAverage: parseNum(tbRow2.total),
           // Match Total Games
-          p1AvgGamesPerSet: parseNum(avgGRow.p1),
-          p2AvgGamesPerSet: parseNum(avgGRow.p2),
-          avgGamesPerSet: parseNum(avgGRow.total),
-          gamesOver20_5Pct: parsePct(o205Row.total),
-          gamesOver21_5Pct: parsePct(o215Row.total),
-          gamesOver22_5Pct: parsePct(o225Row.total),
-          gamesOver23_5Pct: parsePct(o235Row.total),
-          gamesOver24_5Pct: parsePct(o245Row.total),
+          p1AvgGamesPerSet: parseNum(avgGRow2.p1),
+          p2AvgGamesPerSet: parseNum(avgGRow2.p2),
+          avgGamesPerSet: parseNum(avgGRow2.total),
+          gamesOver20_5Pct: parsePct(o205Row.total || o205Row.p1),
+          gamesOver21_5Pct: parsePct(o215Row.total || o215Row.p1),
+          gamesOver22_5Pct: parsePct(o225Row.total || o225Row.p1),
+          gamesOver23_5Pct: parsePct(o235Row.total || o235Row.p1),
+          gamesOver24_5Pct: parsePct(o245Row.total || o245Row.p1),
           // Raw
           rawData,
         };
       }, h2hUrl);
 
       await page.close();
+
+      // Log extraction summary for first few pages
+      if (data && !this.h2hDebugDone) {
+        console.log(`[H2H] Raw sections found:`, JSON.stringify(data.rawData, null, 2).substring(0, 500));
+      }
+
       return data as H2HData;
 
     } catch (err: any) {
