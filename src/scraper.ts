@@ -349,12 +349,10 @@ export class TennisStatsScraper {
           return m ? parseFloat(m[1]) : 0;
         };
 
-        // Get the primary text value from a cell (first <span> text)
+        // Get the primary text value from a cell (full textContent)
+        // Note: some cells have "38<span>%</span>" where the number is a text node
+        // and % is in a span, so we must use full textContent, not just first span
         const getCellValue = (cell: Element): string => {
-          const spans = cell.querySelectorAll(':scope > span');
-          if (spans.length > 0) {
-            return (spans[0].textContent || '').trim();
-          }
           return (cell.textContent || '').replace(/\s+/g, ' ').trim();
         };
 
@@ -453,43 +451,63 @@ export class TennisStatsScraper {
         const l12mRow2 = l12mRow.p1 ? l12mRow : findValue('Full Stats', '12 Month');
 
         // ── Section 2: Match History (div.h2h-history-row) ──────
+        // Structure: 5 child divs per row:
+        //   child[0] (.w13): date as <p>Sep 30<br>2018</p>
+        //   child[1] (.w25): tournament as <p>Beijing WTA<br><span>Hard</span></p>
+        //   child[2] (.w25): player1 name
+        //   child[3] (.w12): score with set-box-global spans
+        //   child[4] (.w25): player2 name
+        // Winner div has .winner class
         const matchHistory: Array<{ date: string; tournament: string; surface: string; winner: string; score: string }> = [];
         document.querySelectorAll('.h2h-history-row').forEach(row => {
-          const text = (row.textContent || '').replace(/\s+/g, ' ').trim();
+          const children = Array.from(row.children) as Element[];
+          if (children.length < 5) return;
 
-          // Extract date (e.g., "Nov 1 2025", "Feb 25 2025")
-          const dateMatch = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}[\s,]+\d{4}/i);
-          if (!dateMatch) return;
+          // Date from child[0]: <p>Sep 30<br>2018</p>
+          // <br> causes textContent to concat without space: "Sep 302018"
+          // Use innerHTML to split by <br> and rejoin with space
+          const dateHTML = children[0].innerHTML;
+          const dateParts = dateHTML.split(/<br\s*\/?>/i);
+          const dateStr = dateParts.map(p => p.replace(/<[^>]+>/g, '').trim()).filter(Boolean).join(' ');
+          // dateStr = "Sep 30 2018"
+          if (!dateStr) return;
 
-          // Extract score (e.g., "2-0", "2-1")
-          const scoreMatch = text.match(/(\d+)\s*-\s*(\d+)/);
-
-          // Extract tournament name — usually between date and surface/score
-          // Look for text patterns
-          const tournamentMatch = text.match(/\d{4}\s+(.+?)(?:\s+Hard|\s+Clay|\s+Grass|\s+\d+-\d+)/i);
-          const tournament = tournamentMatch ? tournamentMatch[1].trim() : '';
-
-          // Surface detection
+          // Tournament + Surface from child[1]: <p>Beijing WTA<br><span>Hard</span></p>
+          const tourneyHTML = children[1].innerHTML;
+          const tourneyParts = tourneyHTML.split(/<br\s*\/?>/i);
+          const tournament = tourneyParts[0] ? tourneyParts[0].replace(/<[^>]+>/g, '').trim() : '';
           let surface = 'Hard';
-          if (text.toLowerCase().includes('clay')) surface = 'Clay';
-          else if (text.toLowerCase().includes('grass')) surface = 'Grass';
+          if (tourneyParts.length > 1) {
+            const surfaceText = tourneyParts.slice(1).join(' ').replace(/<[^>]+>/g, '').trim().toLowerCase();
+            if (surfaceText.includes('clay')) surface = 'Clay';
+            else if (surfaceText.includes('grass')) surface = 'Grass';
+          }
 
-          // Winner detection: look for bold element within the row
+          // Score from child[3]: set-box-global spans (e.g., <span>2</span><span>0</span>)
+          const scoreEl = children[3];
+          const scoreSpans = scoreEl.querySelectorAll('span');
+          let score = '';
+          if (scoreSpans.length >= 2) {
+            score = (scoreSpans[0].textContent || '').trim() + '-' + (scoreSpans[1].textContent || '').trim();
+          } else {
+            const raw = (scoreEl.textContent || '').replace(/\s+/g, '').trim();
+            // Handle "21" → "2-1"
+            if (raw.length === 2 && /^\d{2}$/.test(raw)) {
+              score = raw[0] + '-' + raw[1];
+            } else {
+              score = raw;
+            }
+          }
+
+          // Winner: the child div (index 2 or 4) with .winner class
           let winner = '';
-          const boldEls = row.querySelectorAll('.bold, .good, strong, b');
-          boldEls.forEach(b => {
-            const bText = (b.textContent || '').trim();
-            if (bText.includes(player1.split(' ').pop() || '')) winner = player1;
-            else if (bText.includes(player2.split(' ').pop() || '')) winner = player2;
-          });
+          if (children[2]?.classList?.contains('winner')) {
+            winner = (children[2].textContent || '').replace(/\s+/g, ' ').trim();
+          } else if (children[4]?.classList?.contains('winner')) {
+            winner = (children[4].textContent || '').replace(/\s+/g, ' ').trim();
+          }
 
-          matchHistory.push({
-            date: dateMatch[0],
-            tournament,
-            surface,
-            winner,
-            score: scoreMatch ? scoreMatch[0] : '',
-          });
+          matchHistory.push({ date: dateStr, tournament, surface, winner, score });
         });
 
         // ── Section 3: Win % Breakdown ──────────────────────────
